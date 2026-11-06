@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use crate::config::DEFAULT_API_BASE_URL;
 use crate::ui::components::{AlertDialog, AlertTone, Field};
 use crate::ui::sensitive_text::SensitiveText;
 use crate::ui::state::AppContext;
@@ -17,6 +18,18 @@ pub(crate) fn SecurityScreen() -> Element {
     let mut new_password_confirmation = use_signal(SensitiveText::default);
     let mut password_error = use_signal(|| None::<String>);
     let mut password_changed = use_signal(|| false);
+    let initial_custom_server = crate::config::custom_api_base_url();
+    let mut custom_server_url = use_signal(|| {
+        initial_custom_server
+            .as_ref()
+            .ok()
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_owned())
+    });
+    let mut server_is_custom =
+        use_signal(|| initial_custom_server.as_ref().is_ok_and(Option::is_some));
+    let mut server_error = use_signal(|| initial_custom_server.err());
+    let mut server_saved = use_signal(|| false);
 
     rsx! {
         section { class: "screen workspace-screen",
@@ -25,7 +38,7 @@ pub(crate) fn SecurityScreen() -> Element {
                 p { "Protect access to your wallet and plan for recovery." }
             }
             div { class: "section-tabs", aria_label: "Security sections",
-                for tab in ["Backup", "Password"] {
+                for tab in ["Backup", "Password", "Server"] {
                     button {
                         class: if active() == tab { "selected" } else { "" },
                         aria_pressed: active() == tab,
@@ -37,6 +50,8 @@ pub(crate) fn SecurityScreen() -> Element {
                             backup_verified.set(false);
                             password_error.set(None);
                             password_changed.set(false);
+                            server_error.set(None);
+                            server_saved.set(false);
                         },
                         "{tab}"
                     }
@@ -135,7 +150,7 @@ pub(crate) fn SecurityScreen() -> Element {
                             }
                         }
                     },
-                    _ => rsx! {
+                    "Password" => rsx! {
                         h2 { "Device access" }
                         p {
                             "Change the password used to unlock the encrypted wallet on this device. Your recovery phrase does not change."
@@ -221,6 +236,75 @@ pub(crate) fn SecurityScreen() -> Element {
                                     }
                                 },
                                 "Change password"
+                            }
+                        }
+                    },
+                    _ => rsx! {
+                        h2 { "Wallet server" }
+                        p {
+                            "Choose the server used for balances, fees, transaction history, and broadcasting. Recovery words and private keys never leave this device."
+                        }
+                        div { class: "form-stack server-settings-form",
+                            Field {
+                                label: "Server URL",
+                                input_type: "url",
+                                placeholder: DEFAULT_API_BASE_URL,
+                                autocomplete: "url",
+                                value: custom_server_url(),
+                                oninput: move |value| {
+                                    custom_server_url.set(value);
+                                    server_error.set(None);
+                                    server_saved.set(false);
+                                },
+                            }
+                            p { class: "server-default-note",
+                                "Default: " code { "{DEFAULT_API_BASE_URL}" }
+                            }
+                            div { class: "actions-row",
+                                button {
+                                    class: "button primary",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        match crate::config::save_custom_api_base_url(&custom_server_url()) {
+                                            Ok(url) => {
+                                                custom_server_url.set(url);
+                                                server_is_custom.set(true);
+                                                server_error.set(None);
+                                                server_saved.set(true);
+                                            }
+                                            Err(error) => {
+                                                server_error.set(Some(error));
+                                                server_saved.set(false);
+                                            }
+                                        }
+                                    },
+                                    "Save server"
+                                }
+                                button {
+                                    class: "button secondary",
+                                    r#type: "button",
+                                    disabled: !server_is_custom(),
+                                    onclick: move |_| {
+                                        match crate::config::reset_api_base_url_to_default() {
+                                            Ok(()) => {
+                                                custom_server_url.set(DEFAULT_API_BASE_URL.to_owned());
+                                                server_is_custom.set(false);
+                                                server_error.set(None);
+                                                server_saved.set(false);
+                                            }
+                                            Err(error) => server_error.set(Some(error)),
+                                        }
+                                    },
+                                    "Reset to default"
+                                }
+                            }
+                            if server_saved() {
+                                p { class: "success-message", role: "status",
+                                    "Wallet server saved. New requests will use this URL."
+                                }
+                            }
+                            if let Some(message) = server_error.read().as_deref() {
+                                p { class: "error-message", role: "alert", "{message}" }
                             }
                         }
                     },
