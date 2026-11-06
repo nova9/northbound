@@ -1,3 +1,4 @@
+mod help;
 mod history;
 mod new_wallet;
 mod receive;
@@ -9,6 +10,7 @@ mod unlock;
 mod wallet;
 mod welcome;
 
+pub(crate) use help::HelpScreen;
 pub(crate) use history::HistoryScreen;
 pub(crate) use new_wallet::NewWalletScreen;
 pub(crate) use receive::ReceiveScreen;

@@ -4,8 +4,8 @@ use crate::config::WALLET_NAME;
 use crate::local_wallet;
 use crate::ui::components::{Header, Sidebar};
 use crate::ui::screens::{
-    HistoryScreen, NewWalletScreen, ReceiveScreen, RestoreScreen, SecurityScreen, SendScreen,
-    UnlockScreen, WalletScreen, WelcomeScreen,
+    HelpScreen, HistoryScreen, NewWalletScreen, ReceiveScreen, RestoreScreen, SecurityScreen,
+    SendScreen, UnlockScreen, WalletScreen, WelcomeScreen,
 };
 use crate::ui::state::{AppContext, Route};
 
@@ -76,6 +76,9 @@ pub fn App() -> Element {
                         },
                         Route::Security => rsx! {
                             SecurityScreen {}
+                        },
+                        Route::Help => rsx! {
+                            HelpScreen {}
                         },
                     }
                 }

@@ -13,6 +13,7 @@ pub(crate) enum Route {
     Send,
     History,
     Security,
+    Help,
 }
 
 #[derive(Clone, Copy)]
