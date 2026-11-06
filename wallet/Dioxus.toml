@@ -1,0 +1,7 @@
+[application]
+name = "Northbound"
+
+[bundle]
+publisher = "Northbound"
+identifier = "com.northbound.app"
+icon = ["icons/icon.icns"]

@@ -1,0 +1,71 @@
+use crate::config::CURRENCY_TICKER;
+use crate::ui::state::{AppContext, Route};
+use dioxus::prelude::*;
+
+#[component]
+pub(crate) fn Sidebar() -> Element {
+    let mut context = use_context::<AppContext>();
+    let current = *context.route.read();
+    let items = [
+        (
+            Route::Wallet,
+            "Overview",
+            "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        ),
+        (Route::Send, "Send", "M5 19L19 5 M5 5h14v14"),
+        (Route::Receive, "Receive", "M19 5L5 19 M5 5v14h14"),
+        (
+            Route::History,
+            "History",
+            "M3 12a9 9 0 1 0 3-7 M3 3v6h6 M12 7v5l3 2",
+        ),
+        (
+            Route::Security,
+            "Security",
+            "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
+        ),
+    ];
+    rsx! {
+        aside { class: "sidebar",
+            div { class: "wallet-identity",
+                strong { "Personal wallet" }
+                span { "{CURRENCY_TICKER} · Local keys" }
+            }
+            nav { class: "sidebar-nav", aria_label: "Wallet navigation",
+                for (route , label , path) in items {
+                    button {
+                        class: if current == route { "sidebar-link active" } else { "sidebar-link" },
+                        r#type: "button",
+                        aria_current: if current == route { "page" } else { "false" },
+                        onclick: move |_| context.route.set(route),
+                        svg {
+                            width: "18",
+                            height: "18",
+                            view_box: "0 0 24 24",
+                            fill: "none",
+                            stroke: "currentColor",
+                            stroke_width: "1.6",
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            "aria-hidden": "true",
+                            path { d: path }
+                        }
+                        "{label}"
+                    }
+                }
+            }
+            div { class: "sidebar-footer",
+                span { "Self-custody. On your terms." }
+                button {
+                    class: "button secondary",
+                    r#type: "button",
+                    onclick: move |_| {
+                        context.unlocked_wallet.set(None);
+                        context.route.set(Route::Unlock);
+                    },
+                    "Lock wallet"
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: truenorth-mainnet-data
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: northbound
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: northbound
+  template:
+    metadata:
+      labels:
+        app: northbound
+    spec:
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: truenorthd
+          # Replace this example with the image built for your registry.
+          image: docker.io/example/northbound:truenorthd-v30.5.2
+          imagePullPolicy: Always
+          env:
+            - name: TRUENORTH_NETWORK
+              value: main
+          volumeMounts:
+            - name: truenorth-data
+              mountPath: /var/lib/truenorth
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /usr/local/bin/truenorth-cli
+                  - -datadir=/var/lib/truenorth
+                  - stop
+
+        - name: server
+          # Replace this example with the image built for your registry.
+          image: docker.io/example/northbound:northbound-server-v0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TRUENORTH_NETWORK
+              value: main
+            - name: TRUENORTH_SERVER_BIND
+              value: 0.0.0.0:3000
+            - name: TRUENORTH_RPC_URL
+              value: http://127.0.0.1:9554
+            - name: TRUENORTH_RPC_COOKIE_PATH
+              value: /var/lib/truenorth/.cookie
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: truenorth-data
+              mountPath: /var/lib/truenorth
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: truenorth-data
+          persistentVolumeClaim:
+            claimName: truenorth-mainnet-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: northbound
+spec:
+  type: ClusterIP
+  selector:
+    app: northbound
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

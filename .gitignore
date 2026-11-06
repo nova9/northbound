@@ -1,0 +1,8 @@
+/target
+.DS_Store
+/.local/
+/ANNOUNCEMENT.md
+
+/.agents/
+/.codex/
+/.impeccable/
