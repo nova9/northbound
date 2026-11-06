@@ -76,12 +76,16 @@ pub fn script_pubkey_from_address(address: &str, network: Network) -> Result<[u8
 }
 
 fn commitment_from_public_key(public_key: &[u8; 32]) -> [u8; 32] {
+    calculate_commitment(SCHNORR_SCHEME_ID, public_key, EMPTY_SCRIPT_ROOT)
+}
+
+fn calculate_commitment(scheme_id: u8, public_key: &[u8; 32], script_root: [u8; 32]) -> [u8; 32] {
     let mut commitment_hasher = Sha256::new();
 
     commitment_hasher.update(DOMAIN_TAG);
-    commitment_hasher.update([SCHNORR_SCHEME_ID]);
+    commitment_hasher.update([scheme_id]);
     commitment_hasher.update(public_key);
-    commitment_hasher.update(EMPTY_SCRIPT_ROOT);
+    commitment_hasher.update(script_root);
 
     let commitment = commitment_hasher.finalize();
     let mut commitment_bytes = [0_u8; 32];
@@ -95,8 +99,52 @@ mod tests {
     use bitcoin::secp256k1::{Secp256k1, SecretKey};
 
     use super::{
-        Network, address_from_public_key, script_pubkey_from_address, script_pubkey_from_public_key,
+        EMPTY_SCRIPT_ROOT, Network, address_from_public_key, calculate_commitment,
+        commitment_from_public_key, script_pubkey_from_address, script_pubkey_from_public_key,
     };
+
+    #[test]
+    fn commitment_is_deterministic() {
+        let public_key = [0xab; 32];
+
+        let first_commitment = commitment_from_public_key(&public_key);
+        let second_commitment = commitment_from_public_key(&public_key);
+
+        assert_eq!(first_commitment, second_commitment);
+    }
+
+    #[test]
+    fn commitment_changes_with_scheme_id() {
+        let public_key = [0xab; 32];
+
+        let schnorr_commitment = calculate_commitment(0x01, &public_key, EMPTY_SCRIPT_ROOT);
+        let future_scheme_commitment = calculate_commitment(0x02, &public_key, EMPTY_SCRIPT_ROOT);
+
+        assert_ne!(schnorr_commitment, future_scheme_commitment);
+    }
+
+    #[test]
+    fn commitment_changes_with_public_key() {
+        let first_public_key = [0xab; 32];
+        let second_public_key = [0xcd; 32];
+
+        let first_commitment = calculate_commitment(0x01, &first_public_key, EMPTY_SCRIPT_ROOT);
+        let second_commitment = calculate_commitment(0x01, &second_public_key, EMPTY_SCRIPT_ROOT);
+
+        assert_ne!(first_commitment, second_commitment);
+    }
+
+    #[test]
+    fn commitment_changes_with_script_root() {
+        let public_key = [0xab; 32];
+        let mut nonzero_script_root = EMPTY_SCRIPT_ROOT;
+        nonzero_script_root[31] = 1;
+
+        let empty_root_commitment = calculate_commitment(0x01, &public_key, EMPTY_SCRIPT_ROOT);
+        let nonzero_root_commitment = calculate_commitment(0x01, &public_key, nonzero_script_root);
+
+        assert_ne!(empty_root_commitment, nonzero_root_commitment);
+    }
 
     #[test]
     fn matches_truenorth_core_regtest_address() {

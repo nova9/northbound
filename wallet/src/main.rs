@@ -1,15 +1,3 @@
-mod api;
-mod config;
-mod keys;
-mod local_wallet;
-mod p2qrh;
-mod transaction_plan;
-mod transaction_signing;
-mod ui;
-mod unsigned_transaction;
-mod wallet_file;
-mod wallet_secrets;
-
 fn main() {
     let window = dioxus::desktop::WindowBuilder::new()
         .with_inner_size(dioxus::desktop::LogicalSize::new(1080.0, 640.0))
@@ -30,5 +18,5 @@ fn main() {
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(desktop)
-        .launch(ui::App);
+        .launch(wallet::App);
 }
