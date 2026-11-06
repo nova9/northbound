@@ -43,6 +43,16 @@ select { width: 170px; }
 .header-button { border: 0; background: transparent; color: var(--color-primary); padding: 7px; }
 .setup-nav { display: flex; gap: 18px; }
 .setup-nav .active { color: var(--color-primary); }
+.header-messages { flex: 1; min-width: 0; height: 28px; overflow: hidden; display: grid; place-items: center; pointer-events: none; }
+.header-message { display: block; max-width: 100%; overflow: hidden; color: var(--color-text-muted); font-size: 12px; line-height: 28px; text-overflow: ellipsis; white-space: nowrap; animation: header-message-roll-in 220ms cubic-bezier(.2,.8,.2,1); }
+@keyframes header-message-roll-in {
+    from { opacity: 0; transform: translateY(70%); clip-path: inset(100% 0 0); }
+    to { opacity: 1; transform: translateY(0); clip-path: inset(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .header-message { animation: header-message-fade-in 120ms ease-out; }
+    @keyframes header-message-fade-in { from { opacity: 0; } to { opacity: 1; } }
+}
 .app-body { display: grid; min-height: 0; overflow: hidden; }
 .app-body.with-sidebar { grid-template-columns: 190px minmax(0,1fr); }
 .sidebar { display: flex; flex-direction: column; min-height: 0; padding: 24px 12px 14px; border-right: 1px solid var(--color-border); background: #edf1f5; }

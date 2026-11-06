@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use std::collections::VecDeque;
 
 use crate::config::WALLET_NAME;
 use crate::local_wallet;
@@ -21,10 +22,12 @@ pub fn App() -> Element {
 
     let route = use_signal(|| initial_route);
     let unlocked_wallet = use_signal(|| None);
+    let header_messages = use_signal(VecDeque::new);
 
     use_context_provider(|| AppContext {
         route,
         unlocked_wallet,
+        header_messages,
     });
 
     let current_route = *route.read();

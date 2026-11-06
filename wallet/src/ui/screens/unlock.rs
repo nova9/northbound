@@ -39,6 +39,7 @@ pub(crate) fn UnlockScreen() -> Element {
                                 password.write().replace(String::new());
                                 context.unlocked_wallet.set(Some(wallet));
                                 context.route.set(Route::Wallet);
+                                context.push_header_message("Wallet unlocked successfully!");
                             }
                             Err(message) => error.set(Some(message)),
                         }

@@ -11,11 +11,15 @@ enum ConnectionStatus {
     Disconnected,
 }
 
+const MESSAGE_DISPLAY_TIME: std::time::Duration = std::time::Duration::from_secs(4);
+const EMPTY_QUEUE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[component]
 pub(crate) fn Header() -> Element {
     let mut context = use_context::<AppContext>();
 
     let mut connection_status = use_signal(|| ConnectionStatus::Checking);
+    let mut visible_message = use_signal(|| None::<String>);
 
     let route = *context.route.read();
     let onboarding = matches!(route, Route::Welcome | Route::NewWallet | Route::Restore);
@@ -46,11 +50,40 @@ pub(crate) fn Header() -> Element {
                 Err(_) => ConnectionStatus::Disconnected,
             };
 
-            connection_status.set(status);
+            if status != *connection_status.read() {
+                connection_status.set(status);
+            }
 
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
     });
+
+    use_effect(move || {
+        let message = match *connection_status.read() {
+            ConnectionStatus::Connected => "Connected to TrueNorth.",
+            ConnectionStatus::Disconnected => "Connection lost. Northbound will keep trying.",
+            ConnectionStatus::Checking => "Checking the TrueNorth connection.",
+        };
+
+        context.push_header_message(message);
+    });
+
+    use_future(move || async move {
+        loop {
+            let next_message = context.header_messages.write().pop_front();
+
+            let Some(next_message) = next_message else {
+                tokio::time::sleep(EMPTY_QUEUE_CHECK_INTERVAL).await;
+                continue;
+            };
+
+            visible_message.set(Some(next_message));
+            tokio::time::sleep(MESSAGE_DISPLAY_TIME).await;
+            visible_message.set(None);
+        }
+    });
+
+    let current_message = visible_message.read().clone();
 
     rsx! {
         header { class: "header",
@@ -74,6 +107,15 @@ pub(crate) fn Header() -> Element {
                                 "{label}"
                             }
                         }
+                    }
+                }
+                div {
+                    class: "header-messages",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_atomic: "true",
+                    if let Some(message) = current_message {
+                        span { class: "header-message", "{message}" }
                     }
                 }
                 div { class: "header-status",
