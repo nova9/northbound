@@ -31,6 +31,11 @@ pub(crate) fn Sidebar() -> Element {
             "Help",
             "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18 M9.6 9.2a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.2 1-1.2 1.8 M12 17h.01",
         ),
+        (
+            Route::Faq,
+            "FAQ",
+            "M7 7h10 M7 12h7 M7 17h4 M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2",
+        ),
     ];
     rsx! {
         aside { class: "sidebar",

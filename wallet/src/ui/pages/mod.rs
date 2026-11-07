@@ -1,3 +1,4 @@
+mod faq;
 mod help;
 mod history;
 mod home;
@@ -10,6 +11,7 @@ mod transaction;
 mod unlock;
 mod welcome;
 
+pub(crate) use faq::Faq;
 pub(crate) use help::Help;
 pub(crate) use history::History;
 pub(crate) use home::Home;

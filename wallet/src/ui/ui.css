@@ -32,7 +32,7 @@ select { width: 170px; }
 .app-shell.macos-titlebar { grid-template-rows: 74px minmax(0,1fr); }
 .header { position: relative; border-bottom: 1px solid var(--color-border); background: #fff; }
 .titlebar-drag-region { position: absolute; top: 0; left: 80px; right: 0; height: 25px; }
-.header-inner { display: flex; align-items: center; gap: 24px; height: 100%; padding: 0 24px; }
+.header-inner { display: flex; align-items: center; gap: 24px; height: 100%; padding: 0 12px; margin-top: 4px; }
 .macos-titlebar .header-inner { padding-top: 20px; }
 .product-identity { display: flex; align-items: center; gap: 10px; min-width: 150px; font-size: 16px; letter-spacing: -.02em; }
 .product-mark { display: grid; place-items: center; width: 27px; height: 27px; background: #243b59; color: white; border-radius: 7px; font-size: 15px; font-weight: 700; }
@@ -90,6 +90,8 @@ select { width: 170px; }
 .help-link { display: inline-flex; align-items: center; gap: 8px; width: fit-content; margin-top: 18px; text-decoration: none; }
 .help-link:hover { background: #dce3e9; }
 .help-note { margin-top: 12px; color: var(--color-text) !important; }
+.faq-content { width: 100%; padding-top: 2px; }
+.faq-source-link { display: inline-block; margin: 14px 0 0 16px; }
 .muted { color: var(--color-text-muted); }
 .button { min-height: 36px; padding: 8px 14px; border: 1px solid transparent; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .button.primary { background: var(--color-primary); color: white; }
@@ -149,7 +151,8 @@ select { width: 170px; }
 .setting-row p { color: var(--color-text-muted); font-size: 12px; margin-top: 5px; }
 .setting-row > input[type=checkbox] { flex: none; }
 .help-topic { border-bottom: 1px solid var(--color-border); padding: 19px 0; }
-.help-topic summary { cursor: pointer; font-weight: 550; }
+.help-topic summary { cursor: pointer; font-weight: 550; line-height: 1.45; }
+.help-topic summary::marker { color: var(--color-primary); }
 .help-topic p { max-width: 70ch; color: var(--color-text-muted); margin: 12px 0 0 16px; font-size: 13px; }
 .about-wallet { margin-top: 30px; font-size: 12px; }
 .about-wallet p { color: var(--color-text-muted); margin-top: 6px; }

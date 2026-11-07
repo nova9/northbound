@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 
 use crate::ui::layout::AppLayout;
 use crate::ui::pages::{
-    Help, History, Home, NewWallet, Receive, Restore, Send, Settings, Transaction, Unlock, Welcome,
+    Faq, Help, History, Home, NewWallet, Receive, Restore, Send, Settings, Transaction, Unlock,
+    Welcome,
 };
 
 #[derive(Clone, Routable, PartialEq)]
@@ -30,6 +31,9 @@ pub(crate) enum Route {
         #[route("/help")]
         Help,
 
+        #[route("/faq")]
+        Faq,
+
         #[route("/welcome")]
         Welcome,
 
@@ -53,6 +57,8 @@ mod tests {
         assert_eq!(Route::Send.to_string(), "/send");
         assert_eq!(Route::Receive.to_string(), "/receive");
         assert_eq!(Route::Settings.to_string(), "/settings");
+        assert_eq!(Route::Help.to_string(), "/help");
+        assert_eq!(Route::Faq.to_string(), "/faq");
         assert_eq!(
             Route::Transaction {
                 txid: "transaction-id".to_owned(),
