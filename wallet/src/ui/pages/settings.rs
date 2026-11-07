@@ -298,11 +298,6 @@ pub(crate) fn Settings() -> Element {
                                     "Reset to default"
                                 }
                             }
-                            if server_saved() {
-                                p { class: "success-message", role: "status",
-                                    "Wallet server saved. New requests will use this URL."
-                                }
-                            }
                             if let Some(message) = server_error.read().as_deref() {
                                 p { class: "error-message", role: "alert", "{message}" }
                             }
@@ -348,6 +343,16 @@ pub(crate) fn Settings() -> Element {
                     dismiss_label: "Done",
                     tone: AlertTone::Success,
                     on_dismiss: move |_| password_changed.set(false),
+                }
+            }
+
+            if server_saved() {
+                AlertDialog {
+                    title: "Wallet server saved",
+                    message: "New requests will use this server URL.",
+                    dismiss_label: "Done",
+                    tone: AlertTone::Success,
+                    on_dismiss: move |_| server_saved.set(false),
                 }
             }
         }
