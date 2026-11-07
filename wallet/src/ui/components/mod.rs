@@ -5,6 +5,7 @@ mod header;
 mod logo;
 mod recovery_words;
 mod sidebar;
+mod transaction_history;
 
 pub(crate) use alert_dialog::{AlertDialog, AlertTone};
 pub(crate) use error_message::ErrorMessage;
@@ -13,3 +14,4 @@ pub(crate) use header::Header;
 pub(crate) use logo::Logo;
 pub(crate) use recovery_words::RecoveryWords;
 pub(crate) use sidebar::Sidebar;
+pub(crate) use transaction_history::TransactionHistoryView;

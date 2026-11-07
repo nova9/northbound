@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 const SOURCE_CODE_URL: &str = "https://github.com/nova9/northbound";
 
 #[component]
-pub(crate) fn HelpScreen() -> Element {
+pub(crate) fn Help() -> Element {
     rsx! {
         section { class: "screen workspace-screen help-screen",
             div { class: "page-heading",

@@ -14,7 +14,7 @@ fn copy_address_to_clipboard(address: &str) -> Result<(), String> {
 }
 
 #[component]
-pub(crate) fn ReceiveScreen() -> Element {
+pub(crate) fn Receive() -> Element {
     let mut context = use_context::<AppContext>();
     let mut copied_address_index = use_signal(|| None::<u32>);
     let mut clipboard_error = use_signal(|| None::<String>);

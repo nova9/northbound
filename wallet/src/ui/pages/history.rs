@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
 
-use super::transaction_preview::TransactionHistoryView;
+use crate::ui::components::TransactionHistoryView;
 use crate::ui::state::AppContext;
 
 #[component]
-pub(crate) fn HistoryScreen() -> Element {
+pub(crate) fn History() -> Element {
     let context = use_context::<AppContext>();
     let mut refresh_number = use_signal(|| 0_u64);
 

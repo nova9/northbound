@@ -28,7 +28,7 @@ struct SignedTransaction {
 }
 
 #[component]
-pub(crate) fn SendScreen() -> Element {
+pub(crate) fn Send() -> Element {
     let context = use_context::<AppContext>();
     let mut recipient = use_signal(String::new);
     let mut amount = use_signal(String::new);

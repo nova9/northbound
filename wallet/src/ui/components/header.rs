@@ -1,7 +1,8 @@
 use super::logo::Logo;
 use crate::config::WALLET_NAME;
 use crate::config::WALLET_NETWORK;
-use crate::ui::state::{AppContext, Route};
+use crate::ui::routes::Route;
+use crate::ui::state::AppContext;
 use dioxus::prelude::*;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -21,7 +22,7 @@ pub(crate) fn Header() -> Element {
     let mut connection_status = use_signal(|| ConnectionStatus::Checking);
     let mut visible_message = use_signal(|| None::<String>);
 
-    let route = *context.route.read();
+    let route = use_route::<Route>();
     let onboarding = matches!(route, Route::Welcome | Route::NewWallet | Route::Restore);
 
     #[cfg(target_os = "macos")]
@@ -101,9 +102,9 @@ pub(crate) fn Header() -> Element {
                             (Route::Restore, "Restore wallet"),
                         ]
                         {
-                            button {
+                            Link {
+                                to: target.clone(),
                                 class: if route == target { "text-button active" } else { "text-button" },
-                                onclick: move |_| context.route.set(target),
                                 "{label}"
                             }
                         }

@@ -6,7 +6,7 @@ use crate::ui::sensitive_text::SensitiveText;
 use crate::ui::state::AppContext;
 
 #[component]
-pub(crate) fn SecurityScreen() -> Element {
+pub(crate) fn Settings() -> Element {
     let mut context = use_context::<AppContext>();
     let mut active = use_signal(|| "Backup");
     let mut backup_verification_visible = use_signal(|| false);

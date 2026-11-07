@@ -1,14 +1,31 @@
 use dioxus::prelude::*;
 
 use crate::config::CURRENCY_TICKER;
-use crate::local_wallet::calculate_spendable_balance;
-use crate::ui::state::{AppContext, Route};
+use crate::local_wallet::{self, calculate_spendable_balance};
+use crate::ui::routes::Route;
+use crate::ui::state::AppContext;
 
 const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
 
 #[component]
-pub(crate) fn WalletScreen() -> Element {
-    let mut context = use_context::<AppContext>();
+pub(crate) fn Home() -> Element {
+    let context = use_context::<AppContext>();
+    let navigator = use_navigator();
+    let wallet_is_unlocked = context.unlocked_wallet.read().is_some();
+
+    use_effect(move || {
+        if wallet_is_unlocked {
+            return;
+        }
+
+        let destination = if local_wallet::exists() {
+            Route::Unlock
+        } else {
+            Route::Welcome
+        };
+        navigator.replace(destination);
+    });
+
     let wallet_state = {
         let wallet = context.unlocked_wallet.read();
 
@@ -24,12 +41,7 @@ pub(crate) fn WalletScreen() -> Element {
     };
 
     let Some((addresses, current_address)) = wallet_state else {
-        return rsx! {
-            section { class: "screen narrow",
-                h1 { "Wallet unavailable" }
-                p { class: "lede", "Unlock the wallet again to continue." }
-            }
-        };
+        return rsx! {};
     };
 
     let utxos = use_resource(move || {
@@ -90,14 +102,18 @@ pub(crate) fn WalletScreen() -> Element {
                         button {
                             class: "task-button primary-task",
                             r#type: "button",
-                            onclick: move |_| context.route.set(Route::Receive),
+                            onclick: move |_| {
+                                navigator.push(Route::Receive);
+                            },
                             span { class: "task-name", "Receive" }
                             span { class: "task-detail", "Show a payment address" }
                         }
                         button {
                             class: "task-button",
                             r#type: "button",
-                            onclick: move |_| context.route.set(Route::Send),
+                            onclick: move |_| {
+                                navigator.push(Route::Send);
+                            },
                             span { class: "task-name", "Send" }
                             span { class: "task-detail", "Review before signing" }
                         }
@@ -110,7 +126,9 @@ pub(crate) fn WalletScreen() -> Element {
                         button {
                             class: "text-button",
                             r#type: "button",
-                            onclick: move |_| context.route.set(Route::Receive),
+                            onclick: move |_| {
+                                navigator.push(Route::Receive);
+                            },
                             "Manage addresses"
                         }
                     }

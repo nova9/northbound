@@ -3,12 +3,14 @@ use dioxus::prelude::*;
 use crate::keys;
 use crate::local_wallet::save_new_wallet_and_unlock;
 use crate::ui::components::{ErrorMessage, Field, RecoveryWords};
+use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
-use crate::ui::state::{AppContext, Route};
+use crate::ui::state::AppContext;
 
 #[component]
-pub(crate) fn NewWalletScreen() -> Element {
+pub(crate) fn NewWallet() -> Element {
     let mut context = use_context::<AppContext>();
+    let navigator = use_navigator();
     let pending_wallet = use_signal(keys::generate_new_wallet);
     let mut entered_phrase = use_signal(SensitiveText::default);
     let mut password = use_signal(SensitiveText::default);
@@ -111,7 +113,7 @@ pub(crate) fn NewWalletScreen() -> Element {
                                             password.write().replace(String::new());
                                             password_confirmation.write().replace(String::new());
                                             context.unlocked_wallet.set(Some(wallet));
-                                            context.route.set(Route::Wallet);
+                                            navigator.replace(Route::Home);
                                         }
                                         Err(message) => error.set(Some(message)),
                                     }

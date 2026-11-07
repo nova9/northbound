@@ -1,14 +1,16 @@
 use crate::config::CURRENCY_TICKER;
-use crate::ui::state::{AppContext, Route};
+use crate::ui::routes::Route;
+use crate::ui::state::AppContext;
 use dioxus::prelude::*;
 
 #[component]
 pub(crate) fn Sidebar() -> Element {
     let mut context = use_context::<AppContext>();
-    let current = *context.route.read();
+    let current = use_route::<Route>();
+    let navigator = use_navigator();
     let items = [
         (
-            Route::Wallet,
+            Route::Home,
             "Overview",
             "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
         ),
@@ -20,7 +22,7 @@ pub(crate) fn Sidebar() -> Element {
             "M3 12a9 9 0 1 0 3-7 M3 3v6h6 M12 7v5l3 2",
         ),
         (
-            Route::Security,
+            Route::Settings,
             "Security",
             "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
         ),
@@ -38,11 +40,10 @@ pub(crate) fn Sidebar() -> Element {
             }
             nav { class: "sidebar-nav", aria_label: "Wallet navigation",
                 for (route , label , path) in items {
-                    button {
+                    Link {
+                        to: route.clone(),
                         class: if current == route { "sidebar-link active" } else { "sidebar-link" },
-                        r#type: "button",
                         aria_current: if current == route { "page" } else { "false" },
-                        onclick: move |_| context.route.set(route),
                         svg {
                             width: "18",
                             height: "18",
@@ -66,7 +67,7 @@ pub(crate) fn Sidebar() -> Element {
                     r#type: "button",
                     onclick: move |_| {
                         context.unlocked_wallet.set(None);
-                        context.route.set(Route::Unlock);
+                        navigator.replace(Route::Unlock);
                     },
                     "Lock wallet"
                 }

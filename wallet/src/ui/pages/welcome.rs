@@ -3,11 +3,11 @@ use dioxus::prelude::*;
 use crate::config::WALLET_DESCRIPTION;
 use crate::config::WALLET_NAME;
 use crate::ui::components::Logo;
-use crate::ui::state::{AppContext, Route};
+use crate::ui::routes::Route;
 
 #[component]
-pub(crate) fn WelcomeScreen() -> Element {
-    let mut context = use_context::<AppContext>();
+pub(crate) fn Welcome() -> Element {
+    let navigator = use_navigator();
 
     rsx! {
         section { class: "screen welcome-screen",
@@ -22,7 +22,9 @@ pub(crate) fn WelcomeScreen() -> Element {
                     }
                     button {
                         class: "button primary",
-                        onclick: move |_| context.route.set(Route::NewWallet),
+                        onclick: move |_| {
+                            navigator.push(Route::NewWallet);
+                        },
                         "Create new wallet"
                     }
                     div { class: "welcome-restore",
@@ -30,7 +32,9 @@ pub(crate) fn WelcomeScreen() -> Element {
                         p { "Bring it to this device using your 12-word recovery phrase." }
                         button {
                             class: "button secondary",
-                            onclick: move |_| context.route.set(Route::Restore),
+                            onclick: move |_| {
+                                navigator.push(Route::Restore);
+                            },
                             "Restore existing wallet"
                         }
                     }

@@ -64,7 +64,7 @@ fn net_wallet_change(transaction: &WalletTransaction) -> String {
 }
 
 #[component]
-pub(super) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> Element {
+pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> Element {
     let mut selected_index_signal = use_signal(|| 0_usize);
     let mut copied_transaction_id = use_signal(|| None::<String>);
     let mut copy_error = use_signal(|| None::<String>);

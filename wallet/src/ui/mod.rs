@@ -1,6 +1,8 @@
 mod app;
 mod components;
-mod screens;
+mod layout;
+mod pages;
+mod routes;
 mod sensitive_text;
 mod state;
 

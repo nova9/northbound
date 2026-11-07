@@ -2,12 +2,14 @@ use dioxus::prelude::*;
 
 use crate::local_wallet::load_and_unlock_wallet;
 use crate::ui::components::{ErrorMessage, Field};
+use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
-use crate::ui::state::{AppContext, Route};
+use crate::ui::state::AppContext;
 
 #[component]
-pub(crate) fn UnlockScreen() -> Element {
+pub(crate) fn Unlock() -> Element {
     let mut context = use_context::<AppContext>();
+    let navigator = use_navigator();
     let mut password = use_signal(SensitiveText::default);
     let mut error = use_signal(|| None::<String>);
 
@@ -38,7 +40,7 @@ pub(crate) fn UnlockScreen() -> Element {
                             Ok(wallet) => {
                                 password.write().replace(String::new());
                                 context.unlocked_wallet.set(Some(wallet));
-                                context.route.set(Route::Wallet);
+                                navigator.replace(Route::Home);
                                 context.push_header_message("Wallet unlocked successfully!");
                             }
                             Err(message) => error.set(Some(message)),
