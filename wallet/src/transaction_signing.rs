@@ -88,7 +88,7 @@ mod tests {
     use bip39::Mnemonic;
     use bitcoin::secp256k1::{Message, Secp256k1, XOnlyPublicKey, schnorr};
     use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
-    use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
+    use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
 
     use super::sign_p2qrh_transaction;
     use crate::config::WALLET_NETWORK;
@@ -100,43 +100,9 @@ mod tests {
 
     #[test]
     fn p2qrh_witness_contains_a_valid_signature_public_key_and_scheme() {
-        let mnemonic = Mnemonic::parse(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        )
-        .expect("test phrase should be valid");
-        let entropy: [u8; 16] = mnemonic
-            .to_entropy()
-            .try_into()
-            .expect("test phrase should contain 16 bytes of entropy");
+        let (entropy, mut transaction, input) = unsigned_receiving_spend();
         let public_key = keys::derive_receiving_public_key_from_entropy(&entropy, 0)
             .expect("receiving key should derive");
-        let input_script = p2qrh::script_pubkey_from_public_key(&public_key);
-        let input = VerifiedUtxo {
-            outpoint: OutPoint::new(
-                Txid::from_str("fd2344a47141b786846d7b9a78b1c76ed62375a27556f78e7e85bc128056ba4e")
-                    .expect("test transaction ID should be valid"),
-                0,
-            ),
-            amount: Amount::from_sat(1_000_000_000),
-            script_pubkey: ScriptBuf::from_bytes(input_script.to_vec()),
-            keychain: WalletKeychain::Receiving,
-            derivation_index: 0,
-            confirmations: 1,
-            coinbase: false,
-        };
-        let change_address = p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
-            .expect("change fixture should be a valid address");
-        let plan = TransactionPlan {
-            inputs: vec![input.clone()],
-            recipient_amount: 100_000_000,
-            fee: 1_640,
-            change: 899_998_360,
-            change_address: Some(change_address),
-        };
-        let recipient = p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
-            .expect("recipient fixture should be a valid address");
-        let mut transaction = build_unsigned_transaction(&plan, &recipient)
-            .expect("plan should produce an unsigned transaction");
         let previous_outputs = [TxOut {
             value: input.amount,
             script_pubkey: input.script_pubkey.clone(),
@@ -149,11 +115,12 @@ mod tests {
             )
             .expect("test transaction should have a sighash");
 
-        sign_p2qrh_transaction(&mut transaction, &plan.inputs, &entropy)
+        sign_p2qrh_transaction(&mut transaction, &[input.clone()], &entropy)
             .expect("wallet should sign its input");
 
         let witness_items = transaction.input[0].witness.iter().collect::<Vec<_>>();
         assert_eq!(witness_items.len(), 3);
+        assert_eq!(witness_items[0].len(), 64);
         assert_eq!(witness_items[1], public_key);
         assert_eq!(witness_items[2], [0x01]);
 
@@ -170,48 +137,125 @@ mod tests {
 
     #[test]
     fn wallet_refuses_to_sign_with_the_wrong_derivation_index() {
-        let mnemonic = Mnemonic::parse(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        )
-        .expect("test phrase should be valid");
-        let entropy: [u8; 16] = mnemonic
-            .to_entropy()
-            .try_into()
-            .expect("test phrase should contain 16 bytes of entropy");
-        let public_key = keys::derive_receiving_public_key_from_entropy(&entropy, 0)
-            .expect("receiving key should derive");
-        let input_script = p2qrh::script_pubkey_from_public_key(&public_key);
-        let input = VerifiedUtxo {
-            outpoint: OutPoint::new(
-                Txid::from_str("fd2344a47141b786846d7b9a78b1c76ed62375a27556f78e7e85bc128056ba4e")
-                    .expect("test transaction ID should be valid"),
-                0,
-            ),
-            amount: Amount::from_sat(1_000_000_000),
-            script_pubkey: ScriptBuf::from_bytes(input_script.to_vec()),
-            keychain: WalletKeychain::Receiving,
-            derivation_index: 1,
-            confirmations: 1,
-            coinbase: false,
-        };
-        let change_address = p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
-            .expect("change fixture should be a valid address");
-        let plan = TransactionPlan {
-            inputs: vec![input],
-            recipient_amount: 100_000_000,
-            fee: 1_640,
-            change: 899_998_360,
-            change_address: Some(change_address),
-        };
-        let recipient = p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
-            .expect("recipient fixture should be a valid address");
-        let mut transaction = build_unsigned_transaction(&plan, &recipient)
-            .expect("plan should produce an unsigned transaction");
+        let (entropy, mut transaction, mut input) = unsigned_receiving_spend();
+        input.derivation_index = 1;
 
-        let error = sign_p2qrh_transaction(&mut transaction, &plan.inputs, &entropy)
+        let error = sign_p2qrh_transaction(&mut transaction, &[input], &entropy)
             .expect_err("wrong derivation index must not sign");
 
         assert_eq!(error, "selected UTXO does not match its wallet key");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn wallet_refuses_to_sign_with_another_wallets_entropy() {
+        let (_, mut transaction, input) = unsigned_receiving_spend();
+
+        let error = sign_p2qrh_transaction(&mut transaction, &[input], &[1_u8; 16])
+            .expect_err("another wallet must not sign this input");
+
+        assert_eq!(error, "selected UTXO does not match its wallet key");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn wallet_refuses_to_sign_with_the_wrong_keychain() {
+        let (entropy, mut transaction, mut input) = unsigned_receiving_spend();
+        input.keychain = WalletKeychain::Change;
+
+        let error = sign_p2qrh_transaction(&mut transaction, &[input], &entropy)
+            .expect_err("a change key must not sign a receiving output");
+
+        assert_eq!(error, "selected UTXO does not match its wallet key");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn wallet_refuses_to_sign_a_mismatched_commitment() {
+        let (entropy, mut transaction, mut input) = unsigned_receiving_spend();
+        let mut script = input.script_pubkey.to_bytes();
+        script[2] ^= 1;
+        input.script_pubkey = ScriptBuf::from_bytes(script);
+
+        let error = sign_p2qrh_transaction(&mut transaction, &[input], &entropy)
+            .expect_err("the key must match the actual output commitment");
+
+        assert_eq!(error, "selected UTXO does not match its wallet key");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn wallet_refuses_to_sign_without_the_selected_utxo() {
+        let (entropy, mut transaction, _) = unsigned_receiving_spend();
+
+        let error = sign_p2qrh_transaction(&mut transaction, &[], &entropy)
+            .expect_err("every input requires its selected UTXO");
+
+        assert_eq!(error, "transaction inputs do not match the selected UTXOs");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn wallet_refuses_to_sign_a_different_outpoint() {
+        let (entropy, mut transaction, mut input) = unsigned_receiving_spend();
+        input.outpoint.vout += 1;
+
+        let error = sign_p2qrh_transaction(&mut transaction, &[input], &entropy)
+            .expect_err("selected UTXO must identify the transaction input");
+
+        assert_eq!(error, "transaction inputs do not match the selected UTXOs");
+        assert!(transaction.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn signing_preserves_the_reviewed_transaction_details() {
+        let (entropy, mut transaction, input) = unsigned_receiving_spend();
+        let reviewed_transaction = transaction.clone();
+
+        sign_p2qrh_transaction(&mut transaction, &[input], &entropy)
+            .expect("wallet should sign its input");
+
+        assert!(!transaction.input[0].witness.is_empty());
+        transaction.input[0].witness.clear();
+        assert_eq!(transaction, reviewed_transaction);
+    }
+
+    #[test]
+    fn signature_commits_to_the_recipient_amount_fee_and_previous_output() {
+        let (entropy, mut transaction, input) = unsigned_receiving_spend();
+        sign_p2qrh_transaction(&mut transaction, &[input.clone()], &entropy)
+            .expect("wallet should sign its input");
+        assert!(signature_verifies(&transaction, &[input.clone()], 0));
+
+        let mut changed_recipient = transaction.clone();
+        changed_recipient.output[0].script_pubkey = transaction.output[1].script_pubkey.clone();
+        assert!(!signature_verifies(&changed_recipient, &[input.clone()], 0));
+
+        let mut changed_amount = transaction.clone();
+        changed_amount.output[0].value = Amount::from_sat(100_000_001);
+        assert!(!signature_verifies(&changed_amount, &[input.clone()], 0));
+
+        let mut changed_fee = transaction.clone();
+        changed_fee.output[1].value = Amount::from_sat(899_998_359);
+        assert!(!signature_verifies(&changed_fee, &[input.clone()], 0));
+
+        let mut changed_input_amount = input.clone();
+        changed_input_amount.amount = Amount::from_sat(1_000_000_001);
+        assert!(!signature_verifies(
+            &transaction,
+            &[changed_input_amount],
+            0
+        ));
+
+        let mut changed_input_script = input;
+        let mut script = changed_input_script.script_pubkey.to_bytes();
+        script[2] ^= 1;
+        changed_input_script.script_pubkey = ScriptBuf::from_bytes(script);
+        assert!(!signature_verifies(
+            &transaction,
+            &[changed_input_script],
+            0
+        ));
     }
 
     #[test]
@@ -258,12 +302,20 @@ mod tests {
             .expect("first transaction should build");
         sign_p2qrh_transaction(&mut first_transaction, &first_plan.inputs, &entropy)
             .expect("both receiving inputs should sign");
-        assert!(
-            first_transaction
-                .input
-                .iter()
-                .all(|input| !input.witness.is_empty())
-        );
+        for input_index in 0..first_plan.inputs.len() {
+            let expected_key = keys::derive_receiving_public_key_from_entropy(
+                &entropy,
+                first_plan.inputs[input_index].derivation_index,
+            )
+            .expect("receiving key should derive");
+            let witness = first_transaction.input[input_index].witness.to_vec();
+            assert_eq!(witness[1], expected_key);
+            assert!(signature_verifies(
+                &first_transaction,
+                &first_plan.inputs,
+                input_index
+            ));
+        }
 
         let first_change_output = VerifiedUtxo {
             outpoint: OutPoint::new(first_transaction.compute_txid(), 1),
@@ -295,7 +347,42 @@ mod tests {
 
         assert_eq!(second_plan.inputs[0].keychain, WalletKeychain::Change);
         assert_eq!(second_plan.inputs[0].derivation_index, 0);
-        assert!(!second_transaction.input[0].witness.is_empty());
+        let change_witness = second_transaction.input[0].witness.to_vec();
+        assert_eq!(change_witness[1], first_change_key);
+        assert!(signature_verifies(
+            &second_transaction,
+            &second_plan.inputs,
+            0
+        ));
+    }
+
+    fn signature_verifies(
+        transaction: &Transaction,
+        inputs: &[VerifiedUtxo],
+        input_index: usize,
+    ) -> bool {
+        let mut previous_outputs = Vec::new();
+        for input in inputs {
+            previous_outputs.push(TxOut {
+                value: input.amount,
+                script_pubkey: input.script_pubkey.clone(),
+            });
+        }
+        let sighash = SighashCache::new(transaction)
+            .taproot_key_spend_signature_hash(
+                input_index,
+                &Prevouts::All(&previous_outputs),
+                TapSighashType::Default,
+            )
+            .expect("test transaction should have a sighash");
+        let witness = transaction.input[input_index].witness.to_vec();
+        let signature = schnorr::Signature::from_slice(&witness[0])
+            .expect("witness should contain a Schnorr signature");
+        let public_key = XOnlyPublicKey::from_slice(&witness[1])
+            .expect("witness should contain an x-only public key");
+        Secp256k1::verification_only()
+            .verify_schnorr(&signature, &Message::from(sighash), &public_key)
+            .is_ok()
     }
 
     fn receiving_utxo(
@@ -321,5 +408,33 @@ mod tests {
             confirmations: 1,
             coinbase: false,
         }
+    }
+
+    fn unsigned_receiving_spend() -> ([u8; 16], Transaction, VerifiedUtxo) {
+        let entropy = [0_u8; 16];
+        let input = receiving_utxo(
+            &entropy,
+            0,
+            1_000_000_000,
+            "fd2344a47141b786846d7b9a78b1c76ed62375a27556f78e7e85bc128056ba4e",
+        );
+        let recipient_key = keys::derive_receiving_public_key_from_entropy(&entropy, 1)
+            .expect("recipient key should derive");
+        let recipient = p2qrh::address_from_public_key(&recipient_key, WALLET_NETWORK)
+            .expect("recipient address should encode");
+        let change_key = keys::derive_change_public_key_from_entropy(&entropy, 0)
+            .expect("change key should derive");
+        let change_address = p2qrh::address_from_public_key(&change_key, WALLET_NETWORK)
+            .expect("change address should encode");
+        let plan = TransactionPlan {
+            inputs: vec![input.clone()],
+            recipient_amount: 100_000_000,
+            fee: 1_640,
+            change: 899_998_360,
+            change_address: Some(change_address),
+        };
+        let transaction = build_unsigned_transaction(&plan, &recipient)
+            .expect("plan should produce an unsigned transaction");
+        (entropy, transaction, input)
     }
 }

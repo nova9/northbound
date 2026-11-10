@@ -1,6 +1,8 @@
 use std::env;
 use std::process::Command;
 
+use bitcoin::consensus::{deserialize, serialize};
+use bitcoin::{Transaction, Witness};
 use serde_json::Value;
 use wallet::{create_signed_payment_from_receiving_utxo, derive_receiving_address_from_entropy};
 
@@ -189,4 +191,160 @@ fn run_truenorth_cli(arguments: &[&str]) -> String {
         .expect("truenorth-cli output should be UTF-8")
         .trim()
         .to_owned()
+}
+
+#[test]
+#[ignore = "requires TrueNorth Core regtest"]
+fn core_validates_northbound_p2qrh_witnesses_and_descriptor() {
+    let entropy = [0_u8; 16];
+    let receiving_address = derive_receiving_address_from_entropy(&entropy, 1)
+        .expect("receiving address should derive");
+
+    // Mine mature funds for this check independently of the round-trip test.
+    let mining_address = run_funding_wallet_cli(&["getnewaddress"]);
+    run_funding_wallet_cli(&["generatetoaddress", "101", &mining_address]);
+    let transaction_id = run_funding_wallet_cli(&[
+        "-named",
+        "sendtoaddress",
+        &format!("address={receiving_address}"),
+        "amount=1",
+        "fee_rate=1",
+    ]);
+    run_funding_wallet_cli(&["generatetoaddress", "1", &mining_address]);
+    let funding = run_funding_wallet_cli(&["gettransaction", &transaction_id]);
+    let funding: Value =
+        serde_json::from_str(&funding).expect("funding transaction should be JSON");
+    let funding = run_truenorth_cli(&[
+        "decoderawtransaction",
+        funding["hex"].as_str().expect("funding should contain hex"),
+    ]);
+    let funding: Value = serde_json::from_str(&funding).expect("decoded funding should be JSON");
+    let output = funding["vout"]
+        .as_array()
+        .expect("funding should contain outputs")
+        .iter()
+        .find(|output| output["scriptPubKey"]["address"] == receiving_address)
+        .expect("funding should pay Northbound");
+    let output_index = u32::try_from(output["n"].as_u64().expect("output should have an index"))
+        .expect("output index should fit u32");
+    let script = hex::decode(
+        output["scriptPubKey"]["hex"]
+            .as_str()
+            .expect("output should have a script"),
+    )
+    .expect("output script should be hex");
+    let recipient = run_funding_wallet_cli(&["getnewaddress"]);
+    let signed_transaction = create_signed_payment_from_receiving_utxo(
+        &entropy,
+        &transaction_id,
+        output_index,
+        100_000_000,
+        &script,
+        1,
+        &recipient,
+        50_000_000,
+        1,
+    )
+    .expect("Northbound should sign its funded output");
+
+    // Establish acceptance before trying invalid witnesses on the same UTXO.
+    let transactions =
+        serde_json::to_string(&[&signed_transaction]).expect("transaction list should serialize");
+    let result = run_truenorth_cli(&["testmempoolaccept", &transactions]);
+    let result: Value = serde_json::from_str(&result).expect("validation should be JSON");
+    assert_eq!(
+        result[0]["allowed"], true,
+        "Core rejected the valid spend: {result}"
+    );
+
+    check_core_descriptor_address(&signed_transaction, &receiving_address);
+    check_core_rejects_malformed_witnesses(&signed_transaction);
+}
+
+// Mirrors the key-path consensus cases in Core's src/test/truenorth_tests.cpp.
+// Use Core as the validator rather than duplicating its consensus interpreter.
+fn check_core_rejects_malformed_witnesses(signed_transaction: &str) {
+    let bytes = hex::decode(signed_transaction).expect("signed transaction should be hex");
+    let transaction: Transaction = deserialize(&bytes).expect("transaction should decode");
+    let valid_stack = transaction.input[0].witness.to_vec();
+    assert_eq!(valid_stack.len(), 3);
+    assert_eq!(valid_stack[0].len(), 64);
+    assert_eq!(valid_stack[1].len(), 32);
+    assert_eq!(valid_stack[2], [1]);
+
+    let commitment_error = "Witness program hash mismatch";
+    let cases = [
+        ("unknown_scheme_id", commitment_error),
+        ("scheme_id_zero", commitment_error),
+        ("scheme_id_wrong_byte_length", commitment_error),
+        ("wrong_pubkey_size", commitment_error),
+        ("commitment_mismatch", commitment_error),
+        ("invalid_signature", "Invalid Schnorr signature"),
+        (
+            "empty_witness",
+            "Witness program was passed an empty witness",
+        ),
+        ("too_few_stack_items", commitment_error),
+        ("extra_stack_items", commitment_error),
+    ];
+
+    for (case, expected_error) in cases {
+        let mut stack = valid_stack.clone();
+        match case {
+            "unknown_scheme_id" => stack[2] = vec![2],
+            "scheme_id_zero" => stack[2] = vec![0],
+            "scheme_id_wrong_byte_length" => stack[2] = vec![1, 0],
+            "wrong_pubkey_size" => {
+                stack[1].pop();
+            }
+            "commitment_mismatch" => stack[1][0] ^= 1,
+            "invalid_signature" => stack[0][0] ^= 0xff,
+            "empty_witness" => stack.clear(),
+            "too_few_stack_items" => {
+                stack.pop();
+            }
+            "extra_stack_items" => stack.insert(0, vec![0xde, 0xad]),
+            _ => unreachable!("all cases are listed above"),
+        }
+
+        let mut malformed_transaction = transaction.clone();
+        malformed_transaction.input[0].witness = Witness::from_slice(&stack);
+        let transactions =
+            serde_json::to_string(&vec![hex::encode(serialize(&malformed_transaction))])
+                .expect("transaction list should serialize");
+        let result = run_truenorth_cli(&["testmempoolaccept", &transactions]);
+        let result: Value = serde_json::from_str(&result).expect("validation should be JSON");
+        assert_eq!(
+            result[0]["allowed"], false,
+            "Core accepted {case}: {result}"
+        );
+        let reason = result[0]["reject-reason"]
+            .as_str()
+            .expect("rejection should explain why");
+        // Require the script error, so fee, UTXO, conflict, or policy failures
+        // cannot make a malformed-witness test pass for the wrong reason.
+        assert!(
+            reason.contains("script-verify-flag") && reason.contains(expected_error),
+            "unexpected rejection for {case}: {result}"
+        );
+        println!("Core rejected {case}: {reason}");
+    }
+}
+
+fn check_core_descriptor_address(signed_transaction: &str, receiving_address: &str) {
+    let bytes = hex::decode(signed_transaction).expect("signed transaction should be hex");
+    let transaction: Transaction = deserialize(&bytes).expect("transaction should decode");
+    let public_key = hex::encode(&transaction.input[0].witness.to_vec()[1]);
+    let descriptor = format!("qrh({public_key})");
+    let info = run_truenorth_cli(&["getdescriptorinfo", &descriptor]);
+    let info: Value = serde_json::from_str(&info).expect("descriptor info should be JSON");
+    let descriptor = info["descriptor"]
+        .as_str()
+        .expect("Core should return a descriptor");
+    let addresses = run_truenorth_cli(&["deriveaddresses", descriptor]);
+    let addresses: Value = serde_json::from_str(&addresses).expect("addresses should be JSON");
+    assert_eq!(
+        addresses[0], receiving_address,
+        "Core and Northbound must derive the same P2QRH commitment and address"
+    );
 }

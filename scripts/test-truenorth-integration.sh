@@ -234,6 +234,7 @@ export TRUENORTH_TEST_DATA_DIR="$test_data_directory"
 export TRUENORTH_TEST_RPC_PORT="$rpc_port"
 export TRUENORTH_TEST_WALLET="funding"
 
+# These tests share a node and funding wallet, so keep mining and spending sequential.
 echo "Running Northbound integration tests..."
 
 cd "$repository_directory"
@@ -243,4 +244,5 @@ cargo test \
     --test truenorth_regtest \
     -- \
     --ignored \
-    --nocapture
+    --nocapture \
+    --test-threads=1

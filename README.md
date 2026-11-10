@@ -70,6 +70,17 @@ Run the automated tests:
 cargo test --workspace
 ```
 
+Run the P2QRH checks against an isolated TrueNorth Core regtest node:
+
+```bash
+./scripts/test-truenorth-integration.sh
+```
+
+The script downloads and checksums the version pinned in
+`wallet/tests/truenorth/VERSION.txt`, then removes its temporary chain on exit.
+See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
+with Core's consensus tests.
+
 Mainnet builds use the local server by default. Set the server URL explicitly
 when building a wallet that should connect to a hosted server:
 

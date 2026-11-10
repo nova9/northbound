@@ -214,9 +214,11 @@ mod tests {
 
         let script_pubkey = script_pubkey_from_public_key(&public_key);
 
-        assert_eq!(script_pubkey[0], 0x52);
-        assert_eq!(script_pubkey[1], 0x20);
-        assert_eq!(script_pubkey.len(), 34);
+        // The same commitment is encoded by the reference Core address above.
+        assert_eq!(
+            hex::encode(script_pubkey),
+            "5220b4e572fc15f6a7223c534306cb9dc7865f24e0fa9799812cbe19da78fad2367f"
+        );
     }
 
     #[test]
@@ -225,8 +227,26 @@ mod tests {
         let script_pubkey = script_pubkey_from_address(address, Network::Regtest)
             .expect("reference address should decode");
 
-        assert_eq!(script_pubkey[0], 0x52);
-        assert_eq!(script_pubkey[1], 0x20);
-        assert_eq!(script_pubkey.len(), 34);
+        assert_eq!(
+            hex::encode(script_pubkey),
+            "5220b4e572fc15f6a7223c534306cb9dc7865f24e0fa9799812cbe19da78fad2367f"
+        );
+    }
+
+    #[test]
+    fn rejects_addresses_with_wrong_witness_version_or_program_size() {
+        use bech32::{Fe32, Hrp, segwit};
+
+        let prefix = Hrp::parse("bcrt").expect("regtest prefix should parse");
+        let cases = [(Fe32::P, 32), (Fe32::Z, 31), (Fe32::Z, 33)];
+
+        for (version, program_size) in cases {
+            let address = segwit::encode(prefix, version, &vec![0xab; program_size])
+                .expect("test address should be valid segwit");
+            let error = script_pubkey_from_address(&address, Network::Regtest)
+                .expect_err("only witness v2 with a 32-byte program is P2QRH");
+
+            assert_eq!(error, "address is not a P2QRH address");
+        }
     }
 }
