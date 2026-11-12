@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license = "MIT"
 
@@ -9,5 +9,5 @@ axum = "0.8.9"
 reqwest = { version = "0.13.5", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-shared = { version = "0.1.0", path = "../shared" }
+shared = { path = "../shared" }
 tokio = { version = "1.54.1", features = ["fs", "macros", "rt-multi-thread"] }
