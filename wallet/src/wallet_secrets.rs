@@ -10,9 +10,64 @@ pub(crate) const ENCRYPTION_ALGORITHM: &str = "xchacha20poly1305";
 const ENCRYPTION_KEY_LENGTH: usize = 32;
 pub(crate) type EncryptionKey = Zeroizing<[u8; ENCRYPTION_KEY_LENGTH]>;
 
-pub(crate) const ARGON2_MEMORY_COST_KIB: u32 = 19 * 1024;
-pub(crate) const ARGON2_ITERATIONS: u32 = 2;
-pub(crate) const ARGON2_PARALLELISM: u32 = 1;
+const MIN_ARGON2_MEMORY_COST_KIB: u32 = 19 * 1024;
+const MAX_ARGON2_MEMORY_COST_KIB: u32 = 256 * 1024;
+const MIN_ARGON2_ITERATIONS: u32 = 2;
+const MAX_ARGON2_ITERATIONS: u32 = 10;
+const MIN_ARGON2_PARALLELISM: u32 = 1;
+const MAX_ARGON2_PARALLELISM: u32 = 16;
+
+pub(crate) const CURRENT_KEY_DERIVATION_PARAMETERS: KeyDerivationParameters =
+    KeyDerivationParameters {
+        memory_cost_kib: 64 * 1024,
+        iterations: 3,
+        parallelism: 4,
+    };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct KeyDerivationParameters {
+    memory_cost_kib: u32,
+    iterations: u32,
+    parallelism: u32,
+}
+
+impl KeyDerivationParameters {
+    pub(crate) fn new(
+        memory_cost_kib: u32,
+        iterations: u32,
+        parallelism: u32,
+    ) -> Result<Self, String> {
+        if !(MIN_ARGON2_MEMORY_COST_KIB..=MAX_ARGON2_MEMORY_COST_KIB).contains(&memory_cost_kib) {
+            return Err("wallet Argon2 memory cost is outside the supported range".to_owned());
+        }
+
+        if !(MIN_ARGON2_ITERATIONS..=MAX_ARGON2_ITERATIONS).contains(&iterations) {
+            return Err("wallet Argon2 iteration count is outside the supported range".to_owned());
+        }
+
+        if !(MIN_ARGON2_PARALLELISM..=MAX_ARGON2_PARALLELISM).contains(&parallelism) {
+            return Err("wallet Argon2 parallelism is outside the supported range".to_owned());
+        }
+
+        Ok(Self {
+            memory_cost_kib,
+            iterations,
+            parallelism,
+        })
+    }
+
+    pub(crate) fn memory_cost_kib(self) -> u32 {
+        self.memory_cost_kib
+    }
+
+    pub(crate) fn iterations(self) -> u32 {
+        self.iterations
+    }
+
+    pub(crate) fn parallelism(self) -> u32 {
+        self.parallelism
+    }
+}
 
 pub const SALT_LENGTH: usize = 16;
 pub const NONCE_LENGTH: usize = 24;
@@ -45,14 +100,35 @@ impl DecryptedWalletSecrets {
         EncryptedWalletSecrets::encrypt(&plaintext, password)
     }
 
+    #[cfg(test)]
+    pub(crate) fn encrypt_with_parameters(
+        &self,
+        password: &str,
+        key_derivation_parameters: KeyDerivationParameters,
+    ) -> Result<EncryptedWalletSecrets, String> {
+        let plaintext = self.serialize_for_encryption()?;
+
+        EncryptedWalletSecrets::encrypt_with_parameters(
+            &plaintext,
+            password,
+            key_derivation_parameters,
+        )
+    }
+
     pub(crate) fn encrypt_with_key(
         &self,
         salt: &[u8; SALT_LENGTH],
         encryption_key: &EncryptionKey,
+        key_derivation_parameters: KeyDerivationParameters,
     ) -> Result<EncryptedWalletSecrets, String> {
         let plaintext = self.serialize_for_encryption()?;
 
-        EncryptedWalletSecrets::encrypt_with_key(&plaintext, salt, encryption_key)
+        EncryptedWalletSecrets::encrypt_with_key(
+            &plaintext,
+            salt,
+            encryption_key,
+            key_derivation_parameters,
+        )
     }
 
     fn serialize_for_encryption(&self) -> Result<Zeroizing<Vec<u8>>, String> {
@@ -110,22 +186,33 @@ pub struct EncryptedWalletSecrets {
     salt: [u8; SALT_LENGTH],
     nonce: [u8; NONCE_LENGTH],
     ciphertext: Vec<u8>,
+    key_derivation_parameters: KeyDerivationParameters,
 }
 
 impl EncryptedWalletSecrets {
     pub fn encrypt(plaintext: &[u8], password: &str) -> Result<Self, String> {
+        Self::encrypt_with_parameters(plaintext, password, CURRENT_KEY_DERIVATION_PARAMETERS)
+    }
+
+    pub(crate) fn encrypt_with_parameters(
+        plaintext: &[u8],
+        password: &str,
+        key_derivation_parameters: KeyDerivationParameters,
+    ) -> Result<Self, String> {
         let mut salt = [0_u8; SALT_LENGTH];
         getrandom::fill(&mut salt)
             .map_err(|error| format!("could not generate wallet salt: {error}"))?;
 
-        let encryption_key = derive_encryption_key(password, &salt)?;
+        let encryption_key = derive_encryption_key(password, &salt, key_derivation_parameters)?;
 
-        Self::encrypt_with_key(plaintext, &salt, &encryption_key)
+        Self::encrypt_with_key(plaintext, &salt, &encryption_key, key_derivation_parameters)
     }
 
     #[cfg(test)]
     pub fn decrypt(&self, password: &str) -> Result<Vec<u8>, String> {
-        decrypt_wallet_secrets(&self.ciphertext, password, &self.salt, &self.nonce)
+        let encryption_key = self.derive_encryption_key(password)?;
+
+        decrypt_wallet_secrets_with_key(&self.ciphertext, &encryption_key, &self.nonce)
     }
 
     #[cfg(test)]
@@ -136,7 +223,7 @@ impl EncryptedWalletSecrets {
     }
 
     pub(crate) fn derive_encryption_key(&self, password: &str) -> Result<EncryptionKey, String> {
-        derive_encryption_key(password, &self.salt)
+        derive_encryption_key(password, &self.salt, self.key_derivation_parameters)
     }
 
     pub(crate) fn decrypt_wallet_with_key(
@@ -158,6 +245,7 @@ impl EncryptedWalletSecrets {
         plaintext: &[u8],
         salt: &[u8; SALT_LENGTH],
         encryption_key: &EncryptionKey,
+        key_derivation_parameters: KeyDerivationParameters,
     ) -> Result<Self, String> {
         let mut nonce = [0_u8; NONCE_LENGTH];
         getrandom::fill(&mut nonce)
@@ -169,6 +257,7 @@ impl EncryptedWalletSecrets {
             salt: *salt,
             nonce,
             ciphertext,
+            key_derivation_parameters,
         })
     }
 
@@ -184,10 +273,15 @@ impl EncryptedWalletSecrets {
         &self.ciphertext
     }
 
+    pub(crate) fn key_derivation_parameters(&self) -> KeyDerivationParameters {
+        self.key_derivation_parameters
+    }
+
     pub(crate) fn from_encrypted_parts(
         salt: [u8; SALT_LENGTH],
         nonce: [u8; NONCE_LENGTH],
         ciphertext: Vec<u8>,
+        key_derivation_parameters: KeyDerivationParameters,
     ) -> Result<Self, String> {
         if ciphertext.len() < 16 {
             return Err("wallet ciphertext is too short".to_owned());
@@ -197,6 +291,7 @@ impl EncryptedWalletSecrets {
             salt,
             nonce,
             ciphertext,
+            key_derivation_parameters,
         })
     }
 }
@@ -208,7 +303,7 @@ pub fn encrypt_wallet_secrets(
     salt: &[u8; SALT_LENGTH],
     nonce: &[u8; NONCE_LENGTH],
 ) -> Result<Vec<u8>, String> {
-    let encryption_key = derive_encryption_key(password, salt)?;
+    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
 
     encrypt_wallet_secrets_with_key(plaintext, &encryption_key, nonce)
 }
@@ -236,7 +331,7 @@ pub fn decrypt_wallet_secrets(
     salt: &[u8; SALT_LENGTH],
     nonce: &[u8; NONCE_LENGTH],
 ) -> Result<Vec<u8>, String> {
-    let encryption_key = derive_encryption_key(password, salt)?;
+    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
 
     decrypt_wallet_secrets_with_key(ciphertext, &encryption_key, nonce)
 }
@@ -260,11 +355,12 @@ fn decrypt_wallet_secrets_with_key(
 fn derive_encryption_key(
     password: &str,
     salt: &[u8; SALT_LENGTH],
+    key_derivation_parameters: KeyDerivationParameters,
 ) -> Result<EncryptionKey, String> {
     let parameters = Params::new(
-        ARGON2_MEMORY_COST_KIB,
-        ARGON2_ITERATIONS,
-        ARGON2_PARALLELISM,
+        key_derivation_parameters.memory_cost_kib(),
+        key_derivation_parameters.iterations(),
+        key_derivation_parameters.parallelism(),
         Some(ENCRYPTION_KEY_LENGTH),
     )
     .map_err(|error| format!("invalid wallet encryption parameters: {error}"))?;
@@ -360,7 +456,11 @@ mod tests {
             .expect("wallet key should derive");
 
         let resaved = secrets
-            .encrypt_with_key(encrypted.salt(), &encryption_key)
+            .encrypt_with_key(
+                encrypted.salt(),
+                &encryption_key,
+                encrypted.key_derivation_parameters(),
+            )
             .expect("wallet should encrypt with the retained key");
         let restored = resaved
             .decrypt_wallet_with_key(&encryption_key)

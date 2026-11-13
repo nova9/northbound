@@ -11,7 +11,8 @@ use crate::keys;
 use crate::p2qrh;
 use crate::wallet_file;
 use crate::wallet_secrets::{
-    DecryptedWalletSecrets, EncryptedWalletSecrets, EncryptionKey, SALT_LENGTH,
+    DecryptedWalletSecrets, EncryptedWalletSecrets, EncryptionKey, KeyDerivationParameters,
+    SALT_LENGTH,
 };
 
 const RECOVERY_GAP_LIMIT: u32 = 20;
@@ -73,6 +74,7 @@ pub struct UnlockedWallet {
     secrets: DecryptedWalletSecrets,
     encryption_key: EncryptionKey,
     salt: [u8; SALT_LENGTH],
+    key_derivation_parameters: KeyDerivationParameters,
 }
 
 impl UnlockedWallet {
@@ -83,11 +85,13 @@ impl UnlockedWallet {
         let encryption_key = encrypted_wallet.derive_encryption_key(password)?;
         let secrets = encrypted_wallet.decrypt_wallet_with_key(&encryption_key)?;
         let salt = *encrypted_wallet.salt();
+        let key_derivation_parameters = encrypted_wallet.key_derivation_parameters();
 
         Ok(Self {
             secrets,
             encryption_key,
             salt,
+            key_derivation_parameters,
         })
     }
 
@@ -271,8 +275,11 @@ impl UnlockedWallet {
         updated_secrets
             .set_next_address_indexes(indexes.next_receiving_index, indexes.next_change_index);
 
-        let encrypted_wallet =
-            updated_secrets.encrypt_with_key(&self.salt, &self.encryption_key)?;
+        let encrypted_wallet = updated_secrets.encrypt_with_key(
+            &self.salt,
+            &self.encryption_key,
+            self.key_derivation_parameters,
+        )?;
         save_encrypted_wallet(&encrypted_wallet)?;
         self.secrets = updated_secrets;
 
@@ -286,8 +293,11 @@ impl UnlockedWallet {
         let mut updated_secrets = self.secrets.clone();
         updated_secrets.advance_receiving_index()?;
 
-        let encrypted_wallet =
-            updated_secrets.encrypt_with_key(&self.salt, &self.encryption_key)?;
+        let encrypted_wallet = updated_secrets.encrypt_with_key(
+            &self.salt,
+            &self.encryption_key,
+            self.key_derivation_parameters,
+        )?;
         save_encrypted_wallet(&encrypted_wallet)?;
 
         self.secrets = updated_secrets;
@@ -308,8 +318,11 @@ impl UnlockedWallet {
         let mut updated_secrets = self.secrets.clone();
         updated_secrets.advance_change_index()?;
 
-        let encrypted_wallet =
-            updated_secrets.encrypt_with_key(&self.salt, &self.encryption_key)?;
+        let encrypted_wallet = updated_secrets.encrypt_with_key(
+            &self.salt,
+            &self.encryption_key,
+            self.key_derivation_parameters,
+        )?;
         save_encrypted_wallet(&encrypted_wallet)?;
 
         self.secrets = updated_secrets;
@@ -437,11 +450,14 @@ impl UnlockedWallet {
         let updated_encryption_key =
             updated_encrypted_wallet.derive_encryption_key(new_password)?;
         let updated_salt = *updated_encrypted_wallet.salt();
+        let updated_key_derivation_parameters =
+            updated_encrypted_wallet.key_derivation_parameters();
 
         wallet_file::save(wallet_path, &updated_encrypted_wallet)?;
 
         self.encryption_key = updated_encryption_key;
         self.salt = updated_salt;
+        self.key_derivation_parameters = updated_key_derivation_parameters;
 
         Ok(())
     }
@@ -553,7 +569,9 @@ mod tests {
     use super::{UnlockedWallet, WalletKeychain};
     use crate::keys;
     use crate::p2qrh;
-    use crate::wallet_secrets::DecryptedWalletSecrets;
+    use crate::wallet_secrets::{
+        CURRENT_KEY_DERIVATION_PARAMETERS, DecryptedWalletSecrets, KeyDerivationParameters,
+    };
 
     #[test]
     fn unlocked_wallet_confirms_its_recovery_phrase() {
@@ -603,6 +621,7 @@ mod tests {
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
+            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
         };
 
         let public_key = keys::derive_receiving_public_key_from_entropy(&[0_u8; 16], 0)
@@ -640,6 +659,7 @@ mod tests {
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
+            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
         };
         let public_key = keys::derive_change_public_key_from_entropy(&[0_u8; 16], 0)
             .expect("test change key should derive");
@@ -670,6 +690,7 @@ mod tests {
             secrets: DecryptedWalletSecrets::new([0_u8; 16]),
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
+            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
         };
 
         let first = wallet
@@ -697,6 +718,7 @@ mod tests {
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
+            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
         };
         let checked_addresses = wallet
             .recent_receiving_addresses_for_allocation_check()
@@ -723,6 +745,7 @@ mod tests {
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
+            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
         };
         let checked_addresses = wallet
             .recent_receiving_addresses_for_allocation_check()
@@ -760,6 +783,40 @@ mod tests {
         let saved_wallet =
             crate::wallet_file::load(&wallet_path).expect("changed wallet should load");
         assert!(saved_wallet.decrypt_wallet("current password").is_err());
+        assert!(saved_wallet.decrypt_wallet("replacement password").is_ok());
+    }
+
+    #[test]
+    fn changing_password_upgrades_legacy_key_derivation_parameters() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let wallet_path = directory.path().join("wallet.json");
+        let secrets = DecryptedWalletSecrets::new([42_u8; 16]);
+        let legacy_parameters = KeyDerivationParameters::new(19 * 1024, 2, 1)
+            .expect("legacy parameters should remain supported");
+        let encrypted_wallet = secrets
+            .encrypt_with_parameters("current password", legacy_parameters)
+            .expect("legacy wallet should encrypt");
+        crate::wallet_file::save(&wallet_path, &encrypted_wallet)
+            .expect("legacy wallet should save");
+        let mut wallet =
+            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "current password")
+                .expect("legacy wallet should unlock");
+
+        wallet
+            .change_password_at_path(
+                &wallet_path,
+                "current password",
+                "replacement password",
+                "replacement password",
+            )
+            .expect("wallet password should change");
+
+        let saved_wallet =
+            crate::wallet_file::load(&wallet_path).expect("upgraded wallet should load");
+        assert_eq!(
+            saved_wallet.key_derivation_parameters(),
+            CURRENT_KEY_DERIVATION_PARAMETERS
+        );
         assert!(saved_wallet.decrypt_wallet("replacement password").is_ok());
     }
 

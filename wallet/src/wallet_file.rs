@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::WALLET_NETWORK;
 use crate::wallet_secrets::{
-    ARGON2_ITERATIONS, ARGON2_MEMORY_COST_KIB, ARGON2_PARALLELISM, ENCRYPTION_ALGORITHM,
-    EncryptedWalletSecrets, KEY_DERIVATION_ALGORITHM,
+    ENCRYPTION_ALGORITHM, EncryptedWalletSecrets, KEY_DERIVATION_ALGORITHM, KeyDerivationParameters,
 };
 
 const MAX_WALLET_FILE_BYTES: u64 = 64 * 1024;
@@ -82,14 +81,15 @@ pub fn load(path: &Path) -> Result<EncryptedWalletSecrets, String> {
 }
 
 fn encode_wallet_file(encrypted_wallet: &EncryptedWalletSecrets) -> Result<String, String> {
+    let key_derivation_parameters = encrypted_wallet.key_derivation_parameters();
     let wallet_file = SerializedWalletFile {
         version: WALLET_FILE_VERSION,
         network: WALLET_NETWORK.name().to_owned(),
         key_derivation: KeyDerivationSettings {
             algorithm: KEY_DERIVATION_ALGORITHM.to_owned(),
-            memory_cost_kib: ARGON2_MEMORY_COST_KIB,
-            iterations: ARGON2_ITERATIONS,
-            parallelism: ARGON2_PARALLELISM,
+            memory_cost_kib: key_derivation_parameters.memory_cost_kib(),
+            iterations: key_derivation_parameters.iterations(),
+            parallelism: key_derivation_parameters.parallelism(),
         },
         encryption: ENCRYPTION_ALGORITHM.to_owned(),
         salt: BASE64.encode(encrypted_wallet.salt()),
@@ -107,6 +107,12 @@ fn decode_wallet_file(json: &str) -> Result<EncryptedWalletSecrets, String> {
 
     validate_wallet_file(&wallet_file)?;
 
+    let key_derivation_parameters = KeyDerivationParameters::new(
+        wallet_file.key_derivation.memory_cost_kib,
+        wallet_file.key_derivation.iterations,
+        wallet_file.key_derivation.parallelism,
+    )?;
+
     let salt = BASE64
         .decode(&wallet_file.salt)
         .map_err(|_| "wallet file contains an invalid salt".to_owned())?
@@ -123,7 +129,7 @@ fn decode_wallet_file(json: &str) -> Result<EncryptedWalletSecrets, String> {
         .decode(&wallet_file.ciphertext)
         .map_err(|_| "wallet file contains invalid ciphertext".to_owned())?;
 
-    EncryptedWalletSecrets::from_encrypted_parts(salt, nonce, ciphertext)
+    EncryptedWalletSecrets::from_encrypted_parts(salt, nonce, ciphertext, key_derivation_parameters)
 }
 
 fn validate_wallet_file(wallet_file: &SerializedWalletFile) -> Result<(), String> {
@@ -143,13 +149,6 @@ fn validate_wallet_file(wallet_file: &SerializedWalletFile) -> Result<(), String
 
     if wallet_file.key_derivation.algorithm != KEY_DERIVATION_ALGORITHM {
         return Err("unsupported wallet key-derivation algorithm".to_owned());
-    }
-
-    if wallet_file.key_derivation.memory_cost_kib != ARGON2_MEMORY_COST_KIB
-        || wallet_file.key_derivation.iterations != ARGON2_ITERATIONS
-        || wallet_file.key_derivation.parallelism != ARGON2_PARALLELISM
-    {
-        return Err("unsupported wallet key-derivation parameters".to_owned());
     }
 
     if wallet_file.encryption != ENCRYPTION_ALGORITHM {
@@ -205,7 +204,9 @@ mod tests {
 
     use super::{BASE64, decode_wallet_file, encode_wallet_file, load, save};
     use crate::config::WALLET_NETWORK;
-    use crate::wallet_secrets::{DecryptedWalletSecrets, EncryptedWalletSecrets};
+    use crate::wallet_secrets::{
+        DecryptedWalletSecrets, EncryptedWalletSecrets, KeyDerivationParameters,
+    };
 
     #[test]
     fn encrypted_wallet_has_a_versioned_json_representation() {
@@ -219,6 +220,9 @@ mod tests {
         assert!(json.contains(r#""version": 1"#));
         assert!(json.contains(&format!(r#""network": "{}""#, WALLET_NETWORK.name())));
         assert!(json.contains(r#""algorithm": "argon2id""#));
+        assert!(json.contains(r#""memory_cost_kib": 65536"#));
+        assert!(json.contains(r#""iterations": 3"#));
+        assert!(json.contains(r#""parallelism": 4"#));
         assert!(json.contains(r#""encryption": "xchacha20poly1305""#));
         assert!(!json.contains("bip39_entropy"));
         assert!(!json.contains(&BASE64.encode([42; 16])));
@@ -239,6 +243,47 @@ mod tests {
 
         assert!(restored.matches_entropy(&[42; 16]));
         assert_eq!(restored.next_receiving_index(), 0);
+    }
+
+    #[test]
+    fn wallet_using_legacy_argon2_parameters_can_be_loaded() {
+        let legacy_parameters = KeyDerivationParameters::new(19 * 1024, 2, 1)
+            .expect("legacy parameters should remain supported");
+        let encrypted = EncryptedWalletSecrets::encrypt_with_parameters(
+            b"legacy wallet secrets",
+            "correct horse",
+            legacy_parameters,
+        )
+        .expect("legacy wallet should encrypt");
+        let json = encode_wallet_file(&encrypted).expect("legacy wallet should encode");
+
+        let loaded = decode_wallet_file(&json).expect("legacy wallet should load");
+        let plaintext = loaded
+            .decrypt("correct horse")
+            .expect("legacy wallet should decrypt");
+
+        assert_eq!(plaintext, b"legacy wallet secrets");
+        assert_eq!(loaded.key_derivation_parameters(), legacy_parameters);
+    }
+
+    #[test]
+    fn excessive_argon2_parameters_are_rejected_before_key_derivation() {
+        let encrypted = EncryptedWalletSecrets::encrypt(b"wallet secrets", "correct horse")
+            .expect("wallet should encrypt");
+        let json = encode_wallet_file(&encrypted).expect("wallet should encode");
+        let changed_json = json.replace(
+            r#""memory_cost_kib": 65536"#,
+            r#""memory_cost_kib": 262145"#,
+        );
+
+        let error = decode_wallet_file(&changed_json)
+            .err()
+            .expect("excessive memory setting should be rejected");
+
+        assert_eq!(
+            error,
+            "wallet Argon2 memory cost is outside the supported range"
+        );
     }
 
     #[test]
