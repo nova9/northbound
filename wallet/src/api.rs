@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use shared::{
     AddressActivityRequest, AddressActivityResponse, BroadcastTransactionResponse, ChainTip,
     FeeEstimate, SignedTransactionRequest, TransactionHistory, TransactionHistoryRequest,
@@ -5,13 +7,24 @@ use shared::{
     UtxoResponse, WalletTransaction, WalletUtxo,
 };
 
+const WALLET_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(WALLET_SERVER_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| format!("could not create wallet server client: {error}"))
+}
+
 fn endpoint(path: &str) -> Result<String, String> {
     let base_url = crate::config::current_api_base_url()?;
     Ok(format!("{base_url}{path}"))
 }
 
 pub async fn fetch_chain_height() -> Result<u64, String> {
-    let response = reqwest::get(endpoint("/v1/chain/tip")?)
+    let response = http_client()?
+        .get(endpoint("/v1/chain/tip")?)
+        .send()
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
 
@@ -28,7 +41,9 @@ pub async fn fetch_chain_height() -> Result<u64, String> {
 }
 
 pub async fn fetch_fee_estimate() -> Result<FeeEstimate, String> {
-    let response = reqwest::get(endpoint("/v1/fees/estimate")?)
+    let response = http_client()?
+        .get(endpoint("/v1/fees/estimate")?)
+        .send()
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
 
@@ -44,7 +59,7 @@ pub async fn fetch_fee_estimate() -> Result<FeeEstimate, String> {
 
 pub async fn fetch_used_addresses(addresses: Vec<String>) -> Result<Vec<String>, String> {
     let request = AddressActivityRequest { addresses };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/addresses/activity")?)
         .json(&request)
         .send()
@@ -67,7 +82,7 @@ pub async fn fetch_transaction_history(
     addresses: Vec<String>,
 ) -> Result<Vec<WalletTransaction>, String> {
     let request = TransactionHistoryRequest { addresses };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/transactions")?)
         .json(&request)
         .send()
@@ -88,7 +103,7 @@ pub async fn fetch_transaction_history(
 
 pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, String> {
     let request = UtxoRequest { addresses };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/utxos")?)
         .json(&request)
         .send()
@@ -111,7 +126,7 @@ pub async fn validate_signed_transaction(
     transaction_hex: String,
 ) -> Result<TransactionValidation, String> {
     let request = SignedTransactionRequest { transaction_hex };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/transactions/validate")?)
         .json(&request)
         .send()
@@ -130,7 +145,7 @@ pub async fn validate_signed_transaction(
 
 pub async fn broadcast_signed_transaction(transaction_hex: String) -> Result<String, String> {
     let request = SignedTransactionRequest { transaction_hex };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/transactions/broadcast")?)
         .json(&request)
         .send()
@@ -151,7 +166,7 @@ pub async fn broadcast_signed_transaction(transaction_hex: String) -> Result<Str
 
 pub async fn fetch_transaction_status(transaction_id: String) -> Result<bool, String> {
     let request = TransactionStatusRequest { transaction_id };
-    let response = reqwest::Client::new()
+    let response = http_client()?
         .post(endpoint("/v1/transactions/status")?)
         .json(&request)
         .send()
