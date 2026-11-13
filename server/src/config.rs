@@ -18,7 +18,7 @@ impl ServerConfig {
         }
 
         let default_rpc_url = if network == "main" {
-            "http://127.0.0.1:8332"
+            "http://127.0.0.1:9554"
         } else {
             "http://127.0.0.1:18443"
         };
