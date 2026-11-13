@@ -92,6 +92,12 @@ pub(crate) fn Send() -> Element {
             format!("{} selected inputs", plan.inputs.len())
         }
     });
+    let fee_warning = reviewed_plan.as_ref().and_then(|plan| {
+        fee_is_large_share_of_payment(plan.fee, plan.recipient_amount).then(|| {
+            "The fee is at least 10% of the payment amount. Check it carefully before signing."
+                .to_owned()
+        })
+    });
 
     rsx! {
         section { class: "screen send-screen",
@@ -242,6 +248,9 @@ pub(crate) fn Send() -> Element {
                                 p { "Change: {format_north(plan.change)} {CURRENCY_TICKER}" }
                             } else {
                                 p { "No change output is needed." }
+                            }
+                            if let Some(message) = fee_warning.as_deref() {
+                                p { class: "error-message", role: "alert", "{message}" }
                             }
                             if matches!(node_validation(), NodeValidationState::NotRequested) {
                                 p { "Review the amount and recipient before signing." }
@@ -505,12 +514,23 @@ fn format_optional_north(amount: Option<u64>) -> String {
     }
 }
 
+fn fee_is_large_share_of_payment(fee: u64, payment_amount: u64) -> bool {
+    fee >= payment_amount.div_ceil(10)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_north;
+    use super::{fee_is_large_share_of_payment, parse_north};
 
     #[test]
     fn north_amount_is_parsed_without_floating_point() {
         assert_eq!(parse_north("1.25000001"), Ok(125_000_001));
+    }
+
+    #[test]
+    fn fee_warning_starts_at_ten_percent_of_the_payment() {
+        assert!(!fee_is_large_share_of_payment(9_999, 100_000));
+        assert!(fee_is_large_share_of_payment(10_000, 100_000));
+        assert!(!fee_is_large_share_of_payment(10_000, 100_001));
     }
 }
