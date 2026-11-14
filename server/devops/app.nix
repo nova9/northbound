@@ -8,11 +8,11 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "nova9";
       repo = "northbound";
-      rev = "08dc65fd97fd26e6e619bfe12a35231eea158d78";
-      hash = "sha256-LN+0VGA4XqiXBfi+cHhizK0QUeuw45mn8DRgatJYf0I=";
+      rev = "6f75c8eeed18e2c4da07de0646f595540cbe7e18";
+      hash = "sha256-baLOkEBioNhDSlS0bipqW54osPjMjI2lAkccQGrIaZ4=";
     };
 
-    cargoHash = "sha256-qvBzobtaeQJdecQ8OEI5vj3TzAOE0mJVDh3gdDwp4To=";
+    cargoHash = "sha256-lIB/7McNzRnTzY5mn9uqEVCO6kTeC0Ncu0wTssHKq0g=";
 
     cargoBuildFlags = [
       "-p"
@@ -77,6 +77,14 @@ let
 
 in
 {
+  swapDevices = [
+    {
+      device = "/var/lib/swapfile";
+      size = 4096; # MiB
+    }
+  ];
+
+
   environment.systemPackages = [
     northbound-server
     truenorth
