@@ -11,6 +11,10 @@ runs them sequentially because they share a node and funding wallet. One test
 funds, spends, and confirms a payment. The other independently funds a spend,
 checks its descriptor-derived address, and tests mutated witnesses.
 
+TrueNorth 30.5.4 uses `rnorth` for regtest addresses. The address fixtures
+were checked with that release's `deriveaddresses` RPC. Legacy `bcrt`
+addresses are rejected; the underlying P2QRH commitments are unchanged.
+
 The reference is the 18 `qrh_*` cases in Core's
 [`src/test/truenorth_tests.cpp`](https://github.com/truenorth-project/truenorth/blob/f58d269d10f1c80ab80b31092dd96a4f9436fe3c/src/test/truenorth_tests.cpp).
 Northbound uses the actual node to validate spends rather than implementing a

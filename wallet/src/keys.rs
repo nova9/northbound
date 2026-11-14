@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(
             address,
-            "bcrt1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzs5zjqww",
+            "rnorth1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzsnpx4h6",
         );
     }
 
@@ -350,7 +350,7 @@ mod tests {
 
         assert_eq!(
             address,
-            "bcrt1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzs5zjqww",
+            "rnorth1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzsnpx4h6",
         );
     }
 }

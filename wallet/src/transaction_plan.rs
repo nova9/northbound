@@ -146,7 +146,7 @@ mod tests {
             vec![confirmed_utxo(1_000_000_000, 0)],
             100_000_000,
             10,
-            "bcrt1zchange".to_owned(),
+            "rnorth1zchange".to_owned(),
         )
         .expect("payment should be affordable");
 
@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(plan.recipient_amount, 100_000_000);
         assert_eq!(plan.fee, 1_640);
         assert_eq!(plan.change, 899_998_360);
-        assert_eq!(plan.change_address.as_deref(), Some("bcrt1zchange"));
+        assert_eq!(plan.change_address.as_deref(), Some("rnorth1zchange"));
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
             vec![confirmed_utxo(10_000, 0)],
             8_690,
             10,
-            "bcrt1zchange".to_owned(),
+            "rnorth1zchange".to_owned(),
         )
         .expect("payment should use its dust remainder as fee");
 
@@ -178,7 +178,7 @@ mod tests {
             vec![confirmed_utxo(100_000_000, 0)],
             100_000_000,
             10,
-            "bcrt1zchange".to_owned(),
+            "rnorth1zchange".to_owned(),
         )
         .expect_err("fee should make the payment unaffordable");
 

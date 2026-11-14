@@ -22,7 +22,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     let receiving_address = derive_receiving_address_from_entropy(&wallet_entropy, 0)
         .expect("first receiving address should derive");
 
-    assert!(receiving_address.starts_with("bcrt1z"));
+    assert!(receiving_address.starts_with("rnorth1z"));
     println!("Northbound receiving address: {receiving_address}");
 
     let address_argument = format!("address={receiving_address}");

@@ -28,7 +28,7 @@ impl Network {
     fn address_prefix(self) -> &'static str {
         match self {
             Self::Mainnet => "north",
-            Self::Regtest => "bcrt",
+            Self::Regtest => "rnorth",
         }
     }
 }
@@ -161,7 +161,7 @@ mod tests {
 
         assert_eq!(
             address,
-            "bcrt1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsffa38p",
+            "rnorth1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsw2fy74",
         );
     }
 
@@ -199,7 +199,7 @@ mod tests {
 
         assert_eq!(
             address,
-            "bcrt1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsffa38p",
+            "rnorth1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsw2fy74",
         );
     }
 
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn p2qrh_address_decodes_to_its_script_pubkey() {
-        let address = "bcrt1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsffa38p";
+        let address = "rnorth1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsw2fy74";
         let script_pubkey = script_pubkey_from_address(address, Network::Regtest)
             .expect("reference address should decode");
 
@@ -234,10 +234,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_legacy_bitcoin_regtest_prefix() {
+        let address = "bcrt1zknjh9lq476njy0zngvrvh8w8se0jfc86j7vczt97r8d837kjxelsffa38p";
+
+        let error = script_pubkey_from_address(address, Network::Regtest)
+            .expect_err("TrueNorth 30.5.4 uses rnorth for regtest addresses");
+
+        assert_eq!(error, "address is not for regtest");
+    }
+
+    #[test]
     fn rejects_addresses_with_wrong_witness_version_or_program_size() {
         use bech32::{Fe32, Hrp, segwit};
 
-        let prefix = Hrp::parse("bcrt").expect("regtest prefix should parse");
+        let prefix = Hrp::parse("rnorth").expect("regtest prefix should parse");
         let cases = [(Fe32::P, 32), (Fe32::Z, 31), (Fe32::Z, 33)];
 
         for (version, program_size) in cases {
