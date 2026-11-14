@@ -108,8 +108,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp \
-            --jq 'add | map(select(.draft == false)) | max_by(.published_at)' > "$RUNNER_TEMP/release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp > "$RUNNER_TEMP/releases.json"
+          jq 'add | map(select(.draft == false)) | max_by(.published_at)' \
+            "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/release.json"
           latest_tag=$(jq -r '.tag_name' "$RUNNER_TEMP/release.json")
           if [ "$latest_tag" != "$RELEASE_TAG" ]; then
             echo "Skipping website deployment: this is not the most recently published release."
