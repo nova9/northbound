@@ -3,6 +3,7 @@ members = [
     "wallet",
     "server",
     "shared",
+    "indexer",
 ]
 resolver = "2"
 

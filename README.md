@@ -43,6 +43,7 @@ verification.
 wallet/   Dioxus desktop wallet and local signing
 server/   Axum API backed by truenorthd
 shared/   JSON request and response types
+indexer/  Standalone SQLite confirmed-chain indexer
 scripts/  Local development and packaging helpers
 ```
 
@@ -105,6 +106,10 @@ which release the development and integration scripts use. Deployment versions
 under `server/devops/` are managed independently.
 See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
 with Core's consensus tests.
+
+The [standalone SQLite indexer](indexer/README.md) can catch up with a daemon and
+follow reorganizations. It is not connected to the API server yet; the server
+continues to use its existing RPC query paths.
 
 Build the mainnet desktop wallet for the host OS:
 

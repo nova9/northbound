@@ -2,6 +2,16 @@
 
 set -eu
 
+test_package=${1:-wallet}
+case "$test_package" in
+    wallet | indexer) ;;
+    *) echo "Usage: $0 [wallet|indexer]" >&2; exit 1 ;;
+esac
+if [ "$#" -gt 1 ]; then
+    echo "Usage: $0 [wallet|indexer]" >&2
+    exit 1
+fi
+
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_directory=$(dirname "$script_directory")
 
@@ -96,6 +106,7 @@ export TRUENORTH_TEST_CLI="$cli_path"
 export TRUENORTH_TEST_DATA_DIR="$test_data_directory"
 export TRUENORTH_TEST_RPC_PORT="$rpc_port"
 export TRUENORTH_TEST_WALLET="funding"
+export TRUENORTH_TEST_ISOLATED="1"
 
 # These tests share a node and funding wallet, so keep mining and spending sequential.
 echo "Running Northbound integration tests..."
@@ -103,7 +114,7 @@ echo "Running Northbound integration tests..."
 cd "$repository_directory"
 
 cargo test \
-    -p wallet \
+    -p "$test_package" \
     --test truenorth_regtest \
     -- \
     --ignored \
