@@ -53,8 +53,21 @@ regtest node:
 
 ```bash
 ./scripts/download-truenorth.sh
-./scripts/regtest-start.sh
+./scripts/regtest.sh start
 ```
+
+Create and fund the development wallet, send coins, or stop the node:
+
+```bash
+./scripts/regtest.sh create-wallet funding
+./scripts/regtest.sh generate-coins funding 101
+./scripts/regtest.sh send-coins funding <receiving-address> [amount]
+./scripts/regtest.sh stop
+```
+
+Mining takes a loaded Core wallet name and defaults to 101 blocks; sending
+defaults to 10 NORTH. Development
+commands share the persistent data directory `.local/truenorth/`.
 
 Run the server and wallet in separate terminals:
 
@@ -92,6 +105,25 @@ which release the development and integration scripts use. Deployment versions
 under `server/devops/` are managed independently.
 See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
 with Core's consensus tests.
+
+Build the mainnet desktop wallet for the host OS:
+
+```bash
+./scripts/build-wallet.sh        # Linux AppImage or macOS app
+./scripts/build-windows.ps1      # Windows MSI, run in PowerShell
+```
+
+Build and publish Docker images after setting `DOCKERHUB_REPOSITORY`:
+
+```bash
+./scripts/build-image.sh server [version]
+./scripts/build-image.sh truenorthd
+```
+
+The server version defaults to its Cargo package version, including workspace
+inheritance; the daemon version comes from `server/devops/truenorthd/VERSION.txt`.
+Both commands push the built image.
+`APP_SLUG` and `DOCKER_PLATFORMS` remain available as environment overrides.
 
 Mainnet builds use the local server by default. Set the server URL explicitly
 when building a wallet that should connect to a hosted server:

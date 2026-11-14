@@ -1,6 +1,20 @@
-#!/bin/sh
+#!/usr/bin/env sh
 
 set -eu
+
+if [ "$#" -ne 0 ]; then
+    echo "Usage: $0 (builds for the host OS)" >&2
+    exit 1
+fi
+
+case "$(uname -s)" in
+    Linux) package_type="appimage" ;;
+    Darwin) package_type="macos" ;;
+    *)
+        echo "Unsupported wallet build OS. On Windows, use scripts/build-windows.ps1." >&2
+        exit 1
+        ;;
+esac
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_directory=$(dirname "$script_directory")
@@ -17,6 +31,6 @@ cd "$repository_directory"
     --desktop \
     --release \
     --package wallet \
-    --package-types appimage \
+    --package-types "$package_type" \
     --no-default-features \
     --features mainnet
