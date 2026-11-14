@@ -41,8 +41,8 @@ select { width: 170px; }
 .node-status { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 .node-error { color: var(--color-error); }
 .header-button { border: 0; background: transparent; color: var(--color-primary); padding: 7px; }
-.setup-nav { display: flex; gap: 18px; }
-.setup-nav .active { color: var(--color-primary); }
+.setup-nav { display: flex; align-items: center; gap: 18px; flex-shrink: 0; }
+.setup-nav .active { color: var(--color-text); text-decoration: underline; text-underline-offset: 6px; }
 .header-messages { flex: 1; min-width: 0; height: 28px; overflow: hidden; display: grid; place-items: center; pointer-events: none; }
 .header-message { display: block; max-width: 100%; overflow: hidden; color: var(--color-text-muted); font-size: 12px; line-height: 28px; text-overflow: ellipsis; white-space: nowrap; animation: header-message-roll-in 220ms cubic-bezier(.2,.8,.2,1); }
 @keyframes header-message-roll-in {

@@ -62,7 +62,6 @@ pub(crate) fn Unlock() -> Element {
             if let Some(message) = error.read().as_deref() {
                 ErrorMessage { message: message.to_owned() }
             }
-            Link { to: Route::Wallets, class: "text-button", "Choose another wallet or add one" }
         }
     }
 }

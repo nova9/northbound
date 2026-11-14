@@ -23,7 +23,10 @@ pub(crate) fn Header() -> Element {
     let mut visible_message = use_signal(|| None::<String>);
 
     let route = use_route::<Route>();
-    let onboarding = matches!(route, Route::Welcome | Route::NewWallet | Route::Restore);
+    let onboarding = matches!(
+        route,
+        Route::Welcome | Route::Wallets | Route::NewWallet | Route::Restore | Route::Unlock
+    );
 
     #[cfg(target_os = "macos")]
     let drag = {
@@ -95,22 +98,30 @@ pub(crate) fn Header() -> Element {
                     strong { "{WALLET_NAME}" }
                 }
                 if onboarding {
-                    nav { class: "setup-nav", aria_label: "Wallet setup",
+                    nav {
+                        class: "setup-nav",
+                        aria_label: "Wallet setup and selection",
                         for (target , label) in [
                             (Route::Welcome, "Welcome"),
                             (Route::NewWallet, "Create wallet"),
                             (Route::Restore, "Restore wallet"),
-                        ]
-                        {
+                            (Route::Wallets, "Wallets"),
+                        ] {
                             Link {
                                 to: target.clone(),
                                 class: if route == target { "text-button active" } else { "text-button" },
+                                aria_current: if route == target { "page" } else { "false" },
+                                onclick: move |_| {
+                                    if target != Route::Wallets {
+                                        context.unlocked_wallet.set(None);
+                                        context.selected_wallet.set(None);
+                                    }
+                                },
                                 "{label}"
                             }
                         }
                     }
                 }
-                Link { to: Route::Wallets, class: "text-button", "Wallets" }
                 div {
                     class: "header-messages",
                     role: "status",

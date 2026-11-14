@@ -123,7 +123,6 @@ pub(crate) fn Restore() -> Element {
             if let Some(message) = error.read().as_deref() {
                 ErrorMessage { message: message.to_owned() }
             }
-            Link { to: Route::Wallets, class: "text-button", "Back to wallets" }
         }
     }
 }

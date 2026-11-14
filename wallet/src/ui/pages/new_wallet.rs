@@ -130,7 +130,6 @@ pub(crate) fn NewWallet() -> Element {
                                 },
                                 "Create wallet"
                             }
-                            Link { to: Route::Wallets, class: "text-button", "Back to wallets" }
                         }
                     }
                 }
