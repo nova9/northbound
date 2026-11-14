@@ -51,8 +51,8 @@ python3 scripts/build-website.py /tmp/northbound-release.json /tmp/northbound-we
 python3 -m http.server 8000 --directory /tmp/northbound-website
 ```
 
-Use a new output directory for each build. Add platform-specific buttons when
-their packages are available.
+Use a new output directory for each build. Windows and Linux buttons are disabled
+and labeled “Coming soon.” Enable them only when their release packages are available.
 
 ## Design and review
 
@@ -68,7 +68,13 @@ blue (`#255fb1`), hover blue (`#194d94`), ground (`#f6f7f9`), and hairline
 System typography, 6px button corners, and flat sections carry the same identity;
 larger headings and spacing belong to this public product page.
 
+The hero pairs the headline with its introduction and download action above the
+wallet screenshot. Downloads use a three-column platform row that stacks on phones.
+The screenshot is the supplied `assets/image.png`, converted to `assets/image.avif`.
+
 The source includes keyboard focus, a skip link, reduced-motion handling, and
-responsive layouts at 850px and 580px. These are implementation checks, not
-rendered accessibility or visual approval. Desktop/mobile rendering, keyboard
-navigation, zoom, and overflow still need browser verification before publishing.
+responsive layouts at 850px and 580px. Headless Chrome checks at 1440px, 768px,
+390px, and 320px verified no horizontal overflow, screenshot loading, and disabled
+Windows/Linux buttons. Desktop and phone captures were visually reviewed.
+The release builder also passed with the macOS download and prerelease label intact.
+Manual keyboard, screen-reader, and zoom checks remain outstanding.

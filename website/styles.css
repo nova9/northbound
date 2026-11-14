@@ -21,22 +21,23 @@ a { color: var(--blue); text-underline-offset: .24em; text-decoration-thickness:
 a:hover { color: var(--blue-hover); }
 p { margin: 0; line-height: 1.7; }
 h1, h2, h3 { margin: 0; text-wrap: balance; }
-h1 { font-size: clamp(3.4rem, 7.3vw, 6rem); line-height: 1.04; letter-spacing: -.04em; font-weight: 600; }
+h1 { font-size: clamp(3rem, 6.5vw, 5.5rem); line-height: 1.06; letter-spacing: -.04em; font-weight: 600; }
 h2 { font-size: clamp(2rem, 3.7vw, 3rem); line-height: 1.14; letter-spacing: -.035em; font-weight: 600; }
 h3 { font-size: 1.16rem; line-height: 1.4; font-weight: 600; letter-spacing: -.015em; }
 .wrap { width: min(1160px, calc(100% - 96px)); margin-inline: auto; }
 .skip-link { position: absolute; top: 12px; left: 12px; padding: 12px; background: white; transform: translateY(-200%); z-index: 2; }
 .skip-link:focus { transform: none; }
-.site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 24px; border-bottom: 1px solid var(--line); }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 20px; border-bottom: 1px solid var(--line); }
 .wordmark { display: inline-flex; align-items: center; gap: 6px; font-size: 1.3rem; font-weight: 650; letter-spacing: -.03em; text-decoration: none; color: var(--ink); }
 .wordmark img { display: block; }
 nav { display: flex; align-items: center; gap: 32px; }
 nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: .9rem; text-decoration: none; color: var(--ink); }
 nav a:hover { text-decoration: underline; }
 nav .nav-download { gap: 16px; color: var(--blue); }
-.hero { padding-block: 94px 72px; }
-.hero-bottom { display: flex; align-items: end; justify-content: space-between; gap: 48px; margin-top: 44px; }
-.hero-bottom p { font-size: 1.15rem; color: var(--muted); }
+.hero { padding-block: 80px 56px; }
+.hero-intro { display: grid; grid-template-columns: 1.25fr 1fr; align-items: center; gap: 64px; }
+.hero-actions p { max-width: 38ch; font-size: 1.15rem; color: var(--muted); }
+.hero-actions .button { margin-top: 28px; }
 .hero-screenshot { display: block; width: 100%; height: auto; margin-top: 48px; }
 .button { display: inline-flex; justify-content: space-between; align-items: center; gap: 32px; min-height: 54px; padding: 16px 22px; border-radius: 6px; background: var(--blue); color: white; font-weight: 600; text-decoration: none; flex-shrink: 0; }
 .button:hover { color: white; background: var(--blue-hover); }
@@ -52,11 +53,18 @@ nav .nav-download { gap: 16px; color: var(--blue); }
 .release { padding-block: 88px; }
 .release-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding-bottom: 30px; border-bottom: 1px solid var(--line); }
 .release-heading > p { color: var(--muted); font-variant-numeric: tabular-nums; }
-.release-body { display: grid; grid-template-columns: 1.25fr 1fr; gap: 100px; margin-top: 32px; }
-.release-note p { font-size: .94rem; color: var(--muted); margin-top: 12px; }
-.download-list { list-style: none; padding: 0; margin: 0 0 20px; }
-.download-list li { border-bottom: 1px solid var(--line); }
-.download-list a { display: flex; align-items: center; min-height: 58px; overflow-wrap: anywhere; padding-block: 12px; }
+.release-body { margin-top: 32px; }
+.download-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; list-style: none; padding: 0; margin: 0; }
+.platform-download { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 96px; padding: 20px 24px; border: 1px solid transparent; border-radius: 6px; background: var(--blue); color: white; font: inherit; text-align: left; text-decoration: none; }
+a.platform-download:hover { background: var(--blue-hover); color: white; }
+.platform-name, .platform-detail { display: block; }
+.platform-name { font-size: 1rem; line-height: 1.4; font-weight: 600; }
+.platform-detail { margin-top: 6px; font-size: .85rem; line-height: 1.5; }
+.platform-download svg { flex-shrink: 0; }
+.platform-download:disabled { border-color: var(--line); background: #edf0f4; color: var(--muted); cursor: not-allowed; opacity: 1; }
+.release-note { display: flex; align-items: baseline; gap: 24px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.release-note h3 { font-size: .94rem; flex-shrink: 0; }
+.release-note p { font-size: .94rem; color: var(--muted); }
 .open-source { display: grid; grid-template-columns: 1.25fr 1fr; gap: 100px; padding-block: 48px 80px; border-top: 1px solid var(--line); }
 .open-source p { color: var(--muted); max-width: 50ch; }
 .open-source a { display: inline-block; margin-top: 20px; padding-block: 8px; }
@@ -66,14 +74,17 @@ nav .nav-download { gap: 16px; color: var(--blue); }
 .site-footer .wordmark { font-size: 1rem; }
 .site-footer > a:last-child { padding-block: 12px; }
 @media (prefers-reduced-motion: no-preference) {
-  .button { transition: background-color 150ms ease-out; }
+  .button, a.platform-download { transition: background-color 150ms ease-out; }
 }
 @media (max-width: 850px) {
   .wrap { width: calc(100% - 48px); }
   nav { gap: 20px; }
-  .ownership-layout, .release-body, .open-source { gap: 48px; }
-  .hero { padding-top: 72px; }
-  .hero-bottom { align-items: start; flex-direction: column; gap: 28px; }
+  .ownership-layout, .open-source { gap: 48px; }
+  .hero { padding-top: 56px; }
+  .hero-intro { grid-template-columns: 1fr; gap: 28px; }
+  .hero-actions p { max-width: 48ch; }
+  .platform-download { padding: 18px; }
+  .release-note { align-items: start; flex-direction: column; gap: 8px; }
   .site-footer { flex-wrap: wrap; }
 }
 @media (max-width: 580px) {
@@ -83,17 +94,17 @@ nav .nav-download { gap: 16px; color: var(--blue); }
   nav a { font-size: .8rem; }
   nav .nav-download { gap: 6px; }
   .hero { padding-block: 54px; }
-  .hero-bottom { margin-top: 28px; }
-  .hero-bottom p { font-size: 1rem; }
+  .hero-actions p { font-size: 1rem; }
   .hero-screenshot { margin-top: 32px; }
-  .desktop-break { display: none; }
   .ownership { padding-block: 48px; }
-  .ownership-layout, .release-body, .open-source { grid-template-columns: 1fr; gap: 36px; }
+  .ownership-layout, .open-source { grid-template-columns: 1fr; gap: 36px; }
   .ownership-intro p { max-width: 45ch; }
   .ownership-intro a { margin-top: 16px; }
   .release { padding-block: 54px; }
   .release-heading { align-items: start; flex-direction: column; gap: 16px; }
   .release-body { margin-top: 24px; }
+  .download-list { grid-template-columns: 1fr; gap: 12px; }
+  .platform-download { min-height: 84px; padding: 16px 20px; }
   .open-source { padding-block: 40px 48px; gap: 24px; }
   .site-footer { gap: 12px 24px; }
   .site-footer p { order: 3; flex-basis: 100%; }

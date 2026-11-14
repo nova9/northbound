@@ -21,10 +21,12 @@
   </header>
   <main id="main">
     <section class="hero wrap" aria-labelledby="hero-title">
-      <h1 id="hero-title">A lighter way<br>to hold NORTH.</h1>
-      <div class="hero-bottom">
-        <p>A self-custodial desktop wallet for <a href="https://github.com/truenorth-project/truenorth">TrueNorth</a>.<br class="desktop-break"> Keep your keys. Send with clarity. Travel light.</p>
-        <a class="button" href="#download">Get Northbound <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6M5 21h14"/></svg></a>
+      <div class="hero-intro">
+        <h1 id="hero-title">A lighter way<br>to hold NORTH.</h1>
+        <div class="hero-actions">
+          <p>A self-custodial desktop wallet for <a href="https://github.com/truenorth-project/truenorth">TrueNorth</a>. Keep your keys. Send with clarity. Travel light.</p>
+          <a class="button" href="#download">Get Northbound <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6M5 21h14"/></svg></a>
+        </div>
       </div>
       <img class="hero-screenshot" src="assets/image.avif" width="2384" height="1504" alt="Northbound desktop wallet welcome screen with options to create a new wallet or restore an existing wallet, alongside recovery backup guidance.">
     </section>
@@ -45,11 +47,16 @@
     <section class="release wrap" id="download" aria-labelledby="download-title">
       <div class="release-heading"><h2 id="download-title">Start with Northbound.</h2><p><!-- release-version -->Latest release<!-- /release-version --></p></div>
       <div class="release-body">
-        <div class="download-content">
-          <ul class="download-list">
-            <li><a data-release-download href="https://github.com/nova9/northbound/releases">Download for macOS · Apple silicon</a></li>
-          </ul>
-        </div>
+        <ul class="download-list" aria-label="Desktop downloads">
+          <li>
+            <a class="platform-download" data-release-download href="https://github.com/nova9/northbound/releases">
+              <span><span class="platform-name">Download for macOS</span><span class="platform-detail">Apple silicon</span></span>
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6M5 21h14"/></svg>
+            </a>
+          </li>
+          <li><button class="platform-download" type="button" disabled><span><span class="platform-name">Windows</span><span class="platform-detail">Coming soon</span></span></button></li>
+          <li><button class="platform-download" type="button" disabled><span><span class="platform-name">Linux</span><span class="platform-detail">Coming soon</span></span></button></li>
+        </ul>
         <aside class="release-note"><h3>Keep your recovery words safe.</h3><p>Back up your twelve recovery words. Keep them private and offline.</p></aside>
       </div>
     </section>
