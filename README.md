@@ -15,6 +15,7 @@ it with significant funds.
 ## Current capabilities
 
 - Create or restore a wallet with 12 recovery words.
+- Keep multiple named wallets on one device, each with its own password.
 - Encrypt the local wallet file with Argon2id and XChaCha20-Poly1305.
 - Derive native TrueNorth P2QRH receiving and change addresses locally.
 - Display balances and transaction history supplied by the wallet server.
@@ -49,6 +50,18 @@ scripts/  Local development and packaging helpers
 ```
 
 ## Local development
+
+Use **Wallets** in the header to create, restore, switch, or remove wallets.
+Switching locks the current wallet. **Open wallet folder** opens the storage
+folder in Finder, Windows Explorer, or the Linux file manager.
+
+Each wallet is an encrypted `<name>.json` file. Development wallets live in
+`.local/wallets/<network>/`; release wallets use the operating system's local
+data folder under `io.github.nova9.northbound/wallets/<network>/`.
+The previous single `wallet.json` is not imported automatically; restore that
+wallet with its recovery words. Removing a wallet permanently deletes its local
+file after a backup confirmation and an exact name check. It does not move funds
+or remove other copies of the file.
 
 Install a Rust toolchain, then download a TrueNorth release and start a local
 regtest node:

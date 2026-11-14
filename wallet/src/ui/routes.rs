@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use crate::ui::layout::AppLayout;
 use crate::ui::pages::{
     Faq, Help, History, Home, NewWallet, Receive, Restore, Send, Settings, Transaction, Unlock,
-    Welcome,
+    Wallets, Welcome,
 };
 
 #[derive(Clone, Routable, PartialEq)]
@@ -17,6 +17,9 @@ pub(crate) enum Route {
     #[layout(AppLayout)]
         #[route("/")]
         Home,
+
+        #[route("/wallets")]
+        Wallets,
 
         #[route("/send")]
         Send,

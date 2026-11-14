@@ -38,6 +38,9 @@ pub(crate) fn Sidebar() -> Element {
     ];
     rsx! {
         aside { class: "sidebar",
+            if let Some(wallet) = context.selected_wallet.read().as_ref() {
+                div { class: "sidebar-wallet-name", title: "{wallet.name}", "{wallet.name}" }
+            }
             nav { class: "sidebar-nav", aria_label: "Wallet navigation",
                 for (route , label , path) in items {
                     Link {

@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::config::CURRENCY_TICKER;
-use crate::local_wallet::{self, calculate_spendable_balance};
+use crate::local_wallet::calculate_spendable_balance;
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
 
@@ -18,10 +18,15 @@ pub(crate) fn Home() -> Element {
             return;
         }
 
-        let destination = if local_wallet::exists() {
+        let destination = if context.selected_wallet.read().is_some() {
             Route::Unlock
         } else {
-            Route::Welcome
+            match crate::config::wallet_directory()
+                .and_then(|directory| crate::wallet_catalog::read_wallet_files(&directory))
+            {
+                Ok(wallets) if wallets.is_empty() => Route::Welcome,
+                _ => Route::Wallets,
+            }
         };
         navigator.replace(destination);
     });

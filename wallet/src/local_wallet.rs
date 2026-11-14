@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use bitcoin::hex::FromHex;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Transaction, Txid};
 use shared::WalletUtxo;
 
-use crate::config::{WALLET_NETWORK, wallet_path};
+use crate::config::WALLET_NETWORK;
 use crate::keys;
 use crate::p2qrh;
 use crate::wallet_file;
@@ -71,6 +71,7 @@ pub fn calculate_spendable_balance(utxos: &[VerifiedUtxo]) -> Result<u64, String
 }
 
 pub struct UnlockedWallet {
+    path: PathBuf,
     secrets: DecryptedWalletSecrets,
     encryption_key: EncryptionKey,
     salt: [u8; SALT_LENGTH],
@@ -79,6 +80,7 @@ pub struct UnlockedWallet {
 
 impl UnlockedWallet {
     fn from_encrypted_wallet(
+        path: &Path,
         encrypted_wallet: &EncryptedWalletSecrets,
         password: &str,
     ) -> Result<Self, String> {
@@ -88,6 +90,7 @@ impl UnlockedWallet {
         let key_derivation_parameters = encrypted_wallet.key_derivation_parameters();
 
         Ok(Self {
+            path: path.to_path_buf(),
             secrets,
             encryption_key,
             salt,
@@ -280,7 +283,8 @@ impl UnlockedWallet {
             &self.encryption_key,
             self.key_derivation_parameters,
         )?;
-        save_encrypted_wallet(&encrypted_wallet)?;
+        create_wallet_directory(&self.path)?;
+        wallet_file::save_new(&self.path, &encrypted_wallet)?;
         self.secrets = updated_secrets;
 
         Ok(())
@@ -298,7 +302,7 @@ impl UnlockedWallet {
             &self.encryption_key,
             self.key_derivation_parameters,
         )?;
-        save_encrypted_wallet(&encrypted_wallet)?;
+        wallet_file::save(&self.path, &encrypted_wallet)?;
 
         self.secrets = updated_secrets;
 
@@ -323,7 +327,7 @@ impl UnlockedWallet {
             &self.encryption_key,
             self.key_derivation_parameters,
         )?;
-        save_encrypted_wallet(&encrypted_wallet)?;
+        wallet_file::save(&self.path, &encrypted_wallet)?;
 
         self.secrets = updated_secrets;
 
@@ -404,8 +408,9 @@ impl UnlockedWallet {
         new_password: &str,
         new_password_confirmation: &str,
     ) -> Result<(), String> {
+        let path = self.path.clone();
         self.change_password_at_path(
-            &wallet_path()?,
+            &path,
             current_password,
             new_password,
             new_password_confirmation,
@@ -464,6 +469,7 @@ impl UnlockedWallet {
 }
 
 pub fn save_new_wallet_and_unlock(
+    wallet_path: &Path,
     pending_wallet: &keys::PendingWallet,
     entered_phrase: &str,
     password: &str,
@@ -483,8 +489,6 @@ pub fn save_new_wallet_and_unlock(
         return Err("wallet passwords do not match".to_owned());
     }
 
-    let wallet_path = wallet_path()?;
-
     if wallet_path.exists() {
         return Err(format!(
             "a wallet already exists at {}",
@@ -493,21 +497,26 @@ pub fn save_new_wallet_and_unlock(
     }
 
     let encrypted_wallet = pending_wallet.encrypt(password)?;
-    let unlocked_wallet = UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, password)?;
+    let unlocked_wallet =
+        UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)?;
 
-    create_wallet_directory(&wallet_path)?;
-    wallet_file::save(&wallet_path, &encrypted_wallet)?;
+    create_wallet_directory(wallet_path)?;
+    wallet_file::save_new(wallet_path, &encrypted_wallet)?;
 
     Ok(unlocked_wallet)
 }
 
-pub fn load_and_unlock_wallet(password: &str) -> Result<UnlockedWallet, String> {
-    let encrypted_wallet = wallet_file::load(&wallet_path()?)?;
+pub fn load_and_unlock_wallet(
+    wallet_path: &Path,
+    password: &str,
+) -> Result<UnlockedWallet, String> {
+    let encrypted_wallet = wallet_file::load(wallet_path)?;
 
-    UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, password)
+    UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)
 }
 
 pub fn prepare_restored_wallet(
+    wallet_path: &Path,
     recovery_phrase: &str,
     password: &str,
     password_confirmation: &str,
@@ -515,8 +524,6 @@ pub fn prepare_restored_wallet(
     validate_new_password(password, password_confirmation)?;
 
     let restored_wallet = keys::restore_wallet(recovery_phrase)?;
-
-    let wallet_path = wallet_path()?;
 
     if wallet_path.exists() {
         return Err(format!(
@@ -526,14 +533,7 @@ pub fn prepare_restored_wallet(
     }
 
     let encrypted_wallet = restored_wallet.encrypt(password)?;
-    UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, password)
-}
-
-fn save_encrypted_wallet(encrypted_wallet: &EncryptedWalletSecrets) -> Result<(), String> {
-    let wallet_path = wallet_path()?;
-    create_wallet_directory(&wallet_path)?;
-
-    wallet_file::save(&wallet_path, encrypted_wallet)
+    UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)
 }
 
 fn create_wallet_directory(wallet_path: &Path) -> Result<(), String> {
@@ -557,10 +557,6 @@ fn validate_new_password(password: &str, password_confirmation: &str) -> Result<
     Ok(())
 }
 
-pub fn exists() -> bool {
-    wallet_path().is_ok_and(|path| path.exists())
-}
-
 #[cfg(test)]
 mod tests {
     use shared::WalletUtxo;
@@ -574,15 +570,140 @@ mod tests {
     };
 
     #[test]
+    fn wallets_keep_their_passwords_and_address_indexes_in_separate_files() {
+        let directory = tempfile::tempdir().expect("temporary wallet folder");
+        let first_path = directory.path().join("Spending.json");
+        let second_path = directory.path().join("Savings.json");
+        let first_pending = keys::generate_new_wallet().expect("first wallet");
+        let second_pending = keys::generate_new_wallet().expect("second wallet");
+        let mut first = super::save_new_wallet_and_unlock(
+            &first_path,
+            &first_pending,
+            first_pending.recovery_phrase(),
+            "first wallet password",
+            "first wallet password",
+        )
+        .expect("save first wallet");
+        let mut second = super::save_new_wallet_and_unlock(
+            &second_path,
+            &second_pending,
+            second_pending.recovery_phrase(),
+            "second wallet password",
+            "second wallet password",
+        )
+        .expect("save second wallet");
+        let second_before = std::fs::read(&second_path).expect("read second wallet");
+
+        first
+            .allocate_and_persist_next_receiving_address()
+            .expect("allocate first address");
+        first
+            .reserve_and_persist_next_change_address()
+            .expect("reserve first change address");
+        first
+            .change_password(
+                "first wallet password",
+                "updated first password",
+                "updated first password",
+            )
+            .expect("change first password");
+        assert_eq!(std::fs::read(&second_path).unwrap(), second_before);
+        second
+            .allocate_and_persist_next_receiving_address()
+            .expect("allocate second address");
+
+        assert!(super::load_and_unlock_wallet(&first_path, "first wallet password").is_err());
+        assert!(super::load_and_unlock_wallet(&second_path, "updated first password").is_err());
+        let first = super::load_and_unlock_wallet(&first_path, "updated first password").unwrap();
+        let second = super::load_and_unlock_wallet(&second_path, "second wallet password").unwrap();
+        assert_eq!(first.secrets.next_receiving_index(), 1);
+        assert_eq!(first.secrets.next_change_index(), 1);
+        assert_eq!(second.secrets.next_receiving_index(), 1);
+        assert_eq!(second.secrets.next_change_index(), 0);
+        assert!(
+            first
+                .confirms_recovery_phrase(first_pending.recovery_phrase())
+                .unwrap()
+        );
+        assert!(
+            second
+                .confirms_recovery_phrase(second_pending.recovery_phrase())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn restoring_another_wallet_saves_recovered_indexes_to_its_own_file() {
+        let directory = tempfile::tempdir().expect("temporary wallet folder");
+        let existing_path = directory.path().join("Existing.json");
+        let restored_path = directory.path().join("Restored.json");
+        std::fs::write(&existing_path, "leave this wallet untouched").unwrap();
+        let pending = keys::generate_new_wallet().expect("wallet phrase");
+        let mut restored = super::prepare_restored_wallet(
+            &restored_path,
+            pending.recovery_phrase(),
+            "restored password",
+            "restored password",
+        )
+        .expect("prepare restoration");
+        assert!(!restored_path.exists());
+        restored
+            .persist_recovered_address_indexes(super::RecoveredAddressIndexes {
+                next_receiving_index: 7,
+                next_change_index: 3,
+            })
+            .expect("save restored wallet");
+        let loaded = super::load_and_unlock_wallet(&restored_path, "restored password").unwrap();
+        assert_eq!(loaded.secrets.next_receiving_index(), 7);
+        assert_eq!(loaded.secrets.next_change_index(), 3);
+        assert_eq!(
+            std::fs::read_to_string(existing_path).unwrap(),
+            "leave this wallet untouched"
+        );
+    }
+
+    #[test]
+    fn restoration_cannot_overwrite_a_wallet_created_while_scanning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Restored.json");
+        let pending = keys::generate_new_wallet().unwrap();
+        let mut restored = super::prepare_restored_wallet(
+            &path,
+            pending.recovery_phrase(),
+            "restored password",
+            "restored password",
+        )
+        .unwrap();
+        std::fs::write(&path, "another wallet was created here").unwrap();
+        assert!(
+            restored
+                .persist_recovered_address_indexes(super::RecoveredAddressIndexes {
+                    next_receiving_index: 1,
+                    next_change_index: 0,
+                })
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "another wallet was created here"
+        );
+    }
+
+    #[test]
     fn unlocked_wallet_confirms_its_recovery_phrase() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let wallet_path = directory.path().join("Test.json");
         let pending_wallet = keys::generate_new_wallet().expect("wallet should be generated");
         let recovery_phrase = pending_wallet.recovery_phrase().to_owned();
         let encrypted_wallet = pending_wallet
             .encrypt("a secure test password")
             .expect("wallet should be encrypted");
-        let unlocked_wallet =
-            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "a secure test password")
-                .expect("wallet should unlock");
+        let unlocked_wallet = UnlockedWallet::from_encrypted_wallet(
+            &wallet_path,
+            &encrypted_wallet,
+            "a secure test password",
+        )
+        .expect("wallet should unlock");
 
         let phrase_matches = unlocked_wallet
             .confirms_recovery_phrase(&recovery_phrase)
@@ -593,15 +714,20 @@ mod tests {
 
     #[test]
     fn unlocked_wallet_rejects_another_recovery_phrase() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let wallet_path = directory.path().join("Test.json");
         let pending_wallet = keys::generate_new_wallet().expect("wallet should be generated");
         let other_wallet = keys::generate_new_wallet().expect("second wallet should be generated");
         let other_recovery_phrase = other_wallet.recovery_phrase().to_owned();
         let encrypted_wallet = pending_wallet
             .encrypt("a secure test password")
             .expect("wallet should be encrypted");
-        let unlocked_wallet =
-            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "a secure test password")
-                .expect("wallet should unlock");
+        let unlocked_wallet = UnlockedWallet::from_encrypted_wallet(
+            &wallet_path,
+            &encrypted_wallet,
+            "a secure test password",
+        )
+        .expect("wallet should unlock");
 
         let phrase_matches = unlocked_wallet
             .confirms_recovery_phrase(&other_recovery_phrase)
@@ -618,6 +744,7 @@ mod tests {
             .expect("first receiving address should be allocated");
 
         let wallet = UnlockedWallet {
+            path: std::path::PathBuf::new(),
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
@@ -656,6 +783,7 @@ mod tests {
             .expect("first change address should be reserved");
 
         let wallet = UnlockedWallet {
+            path: std::path::PathBuf::new(),
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
@@ -687,6 +815,7 @@ mod tests {
     #[test]
     fn next_change_address_is_stable_until_reserved() {
         let wallet = UnlockedWallet {
+            path: std::path::PathBuf::new(),
             secrets: DecryptedWalletSecrets::new([0_u8; 16]),
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
@@ -715,6 +844,7 @@ mod tests {
         }
 
         let wallet = UnlockedWallet {
+            path: std::path::PathBuf::new(),
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
@@ -742,6 +872,7 @@ mod tests {
         }
 
         let wallet = UnlockedWallet {
+            path: std::path::PathBuf::new(),
             secrets,
             encryption_key: Zeroizing::new([7_u8; 32]),
             salt: [9_u8; 16],
@@ -767,9 +898,12 @@ mod tests {
             .encrypt("current password")
             .expect("test wallet should encrypt");
         crate::wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
-        let mut wallet =
-            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "current password")
-                .expect("test wallet should unlock");
+        let mut wallet = UnlockedWallet::from_encrypted_wallet(
+            &wallet_path,
+            &encrypted_wallet,
+            "current password",
+        )
+        .expect("test wallet should unlock");
 
         wallet
             .change_password_at_path(
@@ -798,9 +932,12 @@ mod tests {
             .expect("legacy wallet should encrypt");
         crate::wallet_file::save(&wallet_path, &encrypted_wallet)
             .expect("legacy wallet should save");
-        let mut wallet =
-            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "current password")
-                .expect("legacy wallet should unlock");
+        let mut wallet = UnlockedWallet::from_encrypted_wallet(
+            &wallet_path,
+            &encrypted_wallet,
+            "current password",
+        )
+        .expect("legacy wallet should unlock");
 
         wallet
             .change_password_at_path(
@@ -829,9 +966,12 @@ mod tests {
             .encrypt("current password")
             .expect("test wallet should encrypt");
         crate::wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
-        let mut wallet =
-            UnlockedWallet::from_encrypted_wallet(&encrypted_wallet, "current password")
-                .expect("test wallet should unlock");
+        let mut wallet = UnlockedWallet::from_encrypted_wallet(
+            &wallet_path,
+            &encrypted_wallet,
+            "current password",
+        )
+        .expect("test wallet should unlock");
 
         let result = wallet.change_password_at_path(
             &wallet_path,

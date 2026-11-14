@@ -12,10 +12,19 @@ pub(crate) fn Unlock() -> Element {
     let navigator = use_navigator();
     let mut password = use_signal(SensitiveText::default);
     let mut error = use_signal(|| None::<String>);
+    let selected_wallet = context.selected_wallet.read().clone();
+    let Some(selected_wallet) = selected_wallet else {
+        return rsx! {
+            section { class: "screen narrow",
+                h1 { "Choose a wallet" }
+                Link { to: Route::Wallets, class: "button primary", "View wallets" }
+            }
+        };
+    };
 
     rsx! {
         section { class: "screen narrow",
-            h1 { "Unlock your wallet" }
+            h1 { "Unlock {selected_wallet.name}" }
             p { class: "lede",
                 "Enter your local password. Your recovery phrase and private keys stay on this device."
             }
@@ -34,7 +43,7 @@ pub(crate) fn Unlock() -> Element {
                 button {
                     class: "button primary submit-button",
                     onclick: move |_| {
-                        let result = load_and_unlock_wallet(password.read().as_str());
+                        let result = load_and_unlock_wallet(&selected_wallet.path, password.read().as_str());
 
                         match result {
                             Ok(wallet) => {
@@ -53,6 +62,7 @@ pub(crate) fn Unlock() -> Element {
             if let Some(message) = error.read().as_deref() {
                 ErrorMessage { message: message.to_owned() }
             }
+            Link { to: Route::Wallets, class: "text-button", "Choose another wallet or add one" }
         }
     }
 }

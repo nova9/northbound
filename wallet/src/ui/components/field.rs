@@ -8,6 +8,7 @@ pub(crate) fn Field(
     value: String,
     oninput: EventHandler<String>,
     autocomplete: Option<&'static str>,
+    #[props(default = false)] disabled: bool,
 ) -> Element {
     rsx! {
         label { class: "field",
@@ -16,6 +17,7 @@ pub(crate) fn Field(
                 r#type: input_type,
                 placeholder,
                 value,
+                disabled,
                 autocomplete: autocomplete.unwrap_or("on"),
                 oninput: move |event| oninput.call(event.value()),
             }

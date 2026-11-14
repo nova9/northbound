@@ -12,6 +12,12 @@ server receives public addresses and signed transactions only.
   are zeroized when their containers are dropped.
 - The wallet file records its network and cannot be opened by a build for a
   different network.
+- Each unlocked wallet retains its own file path; password and address-index
+  updates write only to that file. Switching wallets drops the unlocked secrets
+  and resets page state. New wallets cannot overwrite an existing file.
+- Removing a wallet requires a recovery-backup confirmation and its exact name.
+  Removal deletes the local encrypted file, not funds on the chain, other copies,
+  or data retained by filesystem backups. It is not a secure-erasure guarantee.
 
 ## Server boundary
 

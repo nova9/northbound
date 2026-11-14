@@ -110,6 +110,7 @@ pub(crate) fn Header() -> Element {
                         }
                     }
                 }
+                Link { to: Route::Wallets, class: "text-button", "Wallets" }
                 div {
                     class: "header-messages",
                     role: "status",
@@ -133,7 +134,7 @@ pub(crate) fn Header() -> Element {
                         }
                         span { "{connection_label}" }
                     }
-                
+
                 }
             }
         }

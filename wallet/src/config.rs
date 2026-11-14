@@ -19,12 +19,6 @@ pub const APPLICATION_IDENTIFIER: &str = "io.github.nova9.northbound";
 pub const WALLET_DESCRIPTION: &str = "A self-custodial wallet for TrueNorth";
 pub const CURRENCY_TICKER: &str = "NORTH";
 
-#[cfg(debug_assertions)]
-const DEVELOPMENT_WALLET_PATH: &str = ".local/wallet.json";
-
-#[cfg(not(debug_assertions))]
-const WALLET_FILE_NAME: &str = "wallet.json";
-
 #[cfg(feature = "regtest")]
 pub const WALLET_NETWORK: Network = Network::Regtest;
 
@@ -263,16 +257,17 @@ mod tests {
 }
 
 #[cfg(debug_assertions)]
-pub(crate) fn wallet_path() -> Result<PathBuf, String> {
-    Ok(PathBuf::from(DEVELOPMENT_WALLET_PATH))
+pub(crate) fn wallet_directory() -> Result<PathBuf, String> {
+    Ok(PathBuf::from(".local/wallets").join(WALLET_NETWORK.name()))
 }
 
 #[cfg(not(debug_assertions))]
-pub(crate) fn wallet_path() -> Result<PathBuf, String> {
+pub(crate) fn wallet_directory() -> Result<PathBuf, String> {
     let application_data_directory = dirs::data_local_dir()
         .ok_or_else(|| "could not locate the application data directory".to_owned())?;
 
     Ok(application_data_directory
         .join(APPLICATION_IDENTIFIER)
-        .join(WALLET_FILE_NAME))
+        .join("wallets")
+        .join(WALLET_NETWORK.name()))
 }

@@ -14,6 +14,12 @@ pub(crate) fn AppLayout() -> Element {
     let navigator = use_navigator();
     let mut last_activity = use_signal(Instant::now);
     let wallet_is_unlocked = context.unlocked_wallet.read().is_some();
+    let wallet_view_key = context
+        .selected_wallet
+        .read()
+        .as_ref()
+        .map(|wallet| wallet.path.to_string_lossy().into_owned())
+        .unwrap_or_default();
 
     use_future(move || async move {
         loop {
@@ -50,7 +56,11 @@ pub(crate) fn AppLayout() -> Element {
                     Sidebar {}
                 }
                 main { class: "content",
-                    Outlet::<Route> {}
+                    // Dioxus applies keys to list children. This single-item list remounts
+                    // the pages when the wallet changes, cancelling their old requests.
+                    for wallet_key in [wallet_view_key] {
+                        Outlet::<Route> { key: "{wallet_key}" }
+                    }
                 }
             }
         }

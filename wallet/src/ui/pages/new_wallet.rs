@@ -11,6 +11,7 @@ use crate::ui::state::AppContext;
 pub(crate) fn NewWallet() -> Element {
     let mut context = use_context::<AppContext>();
     let navigator = use_navigator();
+    let mut wallet_name = use_signal(String::new);
     let pending_wallet = use_signal(keys::generate_new_wallet);
     let mut entered_phrase = use_signal(SensitiveText::default);
     let mut password = use_signal(SensitiveText::default);
@@ -51,6 +52,10 @@ pub(crate) fn NewWallet() -> Element {
                         p { "Re-enter the phrase, then choose a password for this device." }
                         div { class: "form-stack",
                             Field {
+                                label: "Wallet name", input_type: "text", placeholder: "For example, Savings",
+                                value: wallet_name(), oninput: move |value| { wallet_name.set(value); error.set(None); },
+                            }
+                            Field {
                                 label: "Recovery phrase",
                                 autocomplete: "off",
                                 input_type: "text",
@@ -89,7 +94,9 @@ pub(crate) fn NewWallet() -> Element {
                             button {
                                 class: "button primary submit-button",
                                 onclick: move |_| {
-                                    let result = {
+                                    let result = (|| {
+                                        let directory = crate::config::wallet_directory()?;
+                                        let wallet_file = crate::wallet_catalog::find_new_wallet_path(&directory, &wallet_name())?;
                                         let pending_wallet = pending_wallet.read();
                                         let entered_phrase = entered_phrase.read();
                                         let password = password.read();
@@ -97,21 +104,24 @@ pub(crate) fn NewWallet() -> Element {
 
                                         match pending_wallet.as_ref() {
                                             Ok(pending_wallet) => {
-                                                save_new_wallet_and_unlock(
+                                                let wallet = save_new_wallet_and_unlock(
+                                                    &wallet_file.path,
                                                     pending_wallet,
                                                     entered_phrase.as_str(),
                                                     password.as_str(),
                                                     password_confirmation.as_str(),
-                                                )
+                                                )?;
+                                                Ok((wallet_file, wallet))
                                             }
                                             Err(generation_error) => Err(generation_error.clone()),
                                         }
-                                    };
+                                    })();
                                     match result {
-                                        Ok(wallet) => {
+                                        Ok((wallet_file, wallet)) => {
                                             entered_phrase.write().replace(String::new());
                                             password.write().replace(String::new());
                                             password_confirmation.write().replace(String::new());
+                                            context.selected_wallet.set(Some(wallet_file));
                                             context.unlocked_wallet.set(Some(wallet));
                                             navigator.replace(Route::Home);
                                         }
@@ -120,6 +130,7 @@ pub(crate) fn NewWallet() -> Element {
                                 },
                                 "Create wallet"
                             }
+                            Link { to: Route::Wallets, class: "text-button", "Back to wallets" }
                         }
                     }
                 }

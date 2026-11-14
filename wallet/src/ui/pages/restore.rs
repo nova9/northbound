@@ -10,6 +10,7 @@ use crate::ui::state::AppContext;
 pub(crate) fn Restore() -> Element {
     let mut context = use_context::<AppContext>();
     let navigator = use_navigator();
+    let mut wallet_name = use_signal(String::new);
     let mut recovery_phrase = use_signal(SensitiveText::default);
     let mut password = use_signal(SensitiveText::default);
     let mut password_confirmation = use_signal(SensitiveText::default);
@@ -25,10 +26,16 @@ pub(crate) fn Restore() -> Element {
 
             div { class: "form-stack",
                 Field {
+                    label: "Wallet name", input_type: "text", placeholder: "For example, Savings",
+                    disabled: is_scanning(),
+                    value: wallet_name(), oninput: move |value| { wallet_name.set(value); error.set(None); },
+                }
+                Field {
                     label: "Recovery phrase",
                     input_type: "text",
                     placeholder: "Twelve recovery words",
                     autocomplete: "off",
+                    disabled: is_scanning(),
                     value: recovery_phrase.read().to_string(),
                     oninput: move |value| {
                         recovery_phrase.write().replace(value);
@@ -37,6 +44,7 @@ pub(crate) fn Restore() -> Element {
                 }
                 Field {
                     label: "New wallet password",
+                    disabled: is_scanning(),
                     input_type: "password",
                     placeholder: "At least 12 characters",
                     value: password.read().to_string(),
@@ -47,6 +55,7 @@ pub(crate) fn Restore() -> Element {
                 }
                 Field {
                     label: "Confirm new password",
+                    disabled: is_scanning(),
                     input_type: "password",
                     placeholder: "Enter the password again",
                     value: password_confirmation.read().to_string(),
@@ -65,6 +74,7 @@ pub(crate) fn Restore() -> Element {
                         }
 
                         let phrase = recovery_phrase.read().snapshot();
+                        let name = wallet_name();
                         let wallet_password = password.read().snapshot();
                         let confirmation = password_confirmation.read().snapshot();
                         error.set(None);
@@ -72,7 +82,10 @@ pub(crate) fn Restore() -> Element {
 
                         spawn(async move {
                             let result = async {
+                                let directory = crate::config::wallet_directory()?;
+                                let wallet_file = crate::wallet_catalog::find_new_wallet_path(&directory, &name)?;
                                 let mut wallet = prepare_restored_wallet(
+                                    &wallet_file.path,
                                     &phrase,
                                     &wallet_password,
                                     &confirmation,
@@ -80,17 +93,18 @@ pub(crate) fn Restore() -> Element {
                                 let indexes = wallet.scan_recovery_address_indexes().await?;
                                 wallet.persist_recovered_address_indexes(indexes)?;
 
-                                Ok::<_, String>(wallet)
+                                Ok::<_, String>((wallet_file, wallet))
                             }
                                 .await;
 
                             is_scanning.set(false);
 
                             match result {
-                                Ok(wallet) => {
+                                Ok((wallet_file, wallet)) => {
                                     recovery_phrase.write().replace(String::new());
                                     password.write().replace(String::new());
                                     password_confirmation.write().replace(String::new());
+                                    context.selected_wallet.set(Some(wallet_file));
                                     context.unlocked_wallet.set(Some(wallet));
                                     navigator.replace(Route::Home);
                                 }
@@ -109,6 +123,7 @@ pub(crate) fn Restore() -> Element {
             if let Some(message) = error.read().as_deref() {
                 ErrorMessage { message: message.to_owned() }
             }
+            Link { to: Route::Wallets, class: "text-button", "Back to wallets" }
         }
     }
 }

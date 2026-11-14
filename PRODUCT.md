@@ -36,7 +36,7 @@ chain.
 ## Operating Context
 
 The desktop application is written in Rust with Dioxus. Users create or restore
-one wallet locally, unlock it with a local password, and use twelve recovery
+named wallets locally, unlock one at a time with its own password, and use twelve recovery
 words as the ultimate backup.
 
 The wallet communicates with a Rust and Axum API backed by `truenorthd`. The
@@ -52,6 +52,8 @@ server or downloadable release.
 - Create and restore a wallet from twelve English BIP39 recovery words.
 - Store wallet secrets in a versioned, password-encrypted local file.
 - Unlock the wallet and change its local password.
+- Switch between named local wallets, remove a wallet after confirming its backup,
+  and open the wallet folder in the native file manager.
 - Derive native P2QRH receiving and change addresses locally.
 - Discover address activity and recover used derivation indexes.
 - Display balances, transaction history, and confirmation status.
@@ -62,7 +64,7 @@ server or downloadable release.
 
 ## Constraints and Trust Boundary
 
-- The current version supports one wallet and one account.
+- Each wallet currently supports one account; multiple local wallets are supported.
 - Regtest and mainnet builds are supported; Testnet4 is future work.
 - The configured server supplies UTXOs, history, fee estimates, chain status,
   transaction validation, and broadcasting.

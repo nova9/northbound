@@ -15,6 +15,28 @@ use crate::wallet_secrets::{
 const MAX_WALLET_FILE_BYTES: u64 = 64 * 1024;
 const WALLET_FILE_VERSION: u32 = 1;
 
+pub(crate) fn save_new(
+    path: &Path,
+    encrypted_wallet: &EncryptedWalletSecrets,
+) -> Result<(), String> {
+    let json = encode_wallet_file(encrypted_wallet)?;
+    if json.len() as u64 > MAX_WALLET_FILE_BYTES {
+        return Err("encrypted wallet file is too large".to_owned());
+    }
+    let temporary_path = temporary_path_for(path)?;
+    let result = write_temporary_file(&temporary_path, json.as_bytes()).and_then(|()| {
+        // Publishing a new file must fail if it already exists. Unlike rename, hard_link
+        // cannot overwrite a wallet created by another app instance during setup.
+        fs::hard_link(&temporary_path, path).map_err(|error| {
+            format!("Could not create wallet file without overwriting an existing file: {error}")
+        })
+    });
+    let cleanup = fs::remove_file(&temporary_path);
+    result?;
+    cleanup
+        .map_err(|error| format!("Wallet saved, but could not remove its temporary file: {error}"))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SerializedWalletFile {
@@ -338,6 +360,27 @@ mod tests {
             .expect("loaded wallet should decrypt");
 
         assert_eq!(plaintext, b"example wallet secrets");
+    }
+
+    #[test]
+    fn saving_a_new_wallet_never_overwrites_an_existing_file() {
+        let directory = tempfile::tempdir().expect("temporary wallet directory");
+        let path = directory.path().join("Savings.json");
+        let encrypted = EncryptedWalletSecrets::encrypt(b"test secrets", "test wallet password")
+            .expect("encrypt test wallet");
+        super::save_new(&path, &encrypted).expect("save new wallet");
+        let original = std::fs::read(&path).unwrap();
+        assert!(super::save_new(&path, &encrypted).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod transaction_plan;
 mod transaction_signing;
 mod ui;
 mod unsigned_transaction;
+mod wallet_catalog;
 mod wallet_file;
 mod wallet_secrets;
 
