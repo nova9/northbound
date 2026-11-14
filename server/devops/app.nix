@@ -8,11 +8,11 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "nova9";
       repo = "northbound";
-      rev = "6f75c8eeed18e2c4da07de0646f595540cbe7e18";
-      hash = "sha256-baLOkEBioNhDSlS0bipqW54osPjMjI2lAkccQGrIaZ4=";
+      rev = "99217429ec661fd4cb738b9a7d619b527062a07c";
+      hash = pkgs.lib.fakeHash;
     };
 
-    cargoHash = "sha256-lIB/7McNzRnTzY5mn9uqEVCO6kTeC0Ncu0wTssHKq0g=";
+    cargoHash = pkgs.lib.fakeHash;
 
     cargoBuildFlags = [
       "-p"
@@ -29,6 +29,9 @@ let
 
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = [ pkgs.openssl ];
+
+    # Reqwest initializes its TLS verifier even for local HTTP tests.
+    SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
     CARGO_BUILD_JOBS = "1";
     CARGO_PROFILE_RELEASE_OPT_LEVEL = "0";
@@ -165,6 +168,11 @@ in
 
   services.caddy = {
     enable = true;
+    virtualHosts."api.northboundwallet.org".extraConfig = ''
+      reverse_proxy 127.0.0.1:3000
+    '';
+
+    # Keep the IP endpoint available for existing wallet releases.
     # IP clients omit SNI; EC2 exposes a private address to Caddy locally.
     globalConfig = ''
       default_sni 13.55.12.147
