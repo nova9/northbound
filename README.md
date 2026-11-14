@@ -1,4 +1,8 @@
+<img src="wallet/assets/logo.svg" alt="Northbound logo" width="96" height="96">
+
 # Northbound
+
+[northboundwallet.org](https://northboundwallet.org)
 
 Northbound is an experimental, self-custodial lightweight desktop wallet for
 [TrueNorth](https://github.com/truenorth-project/truenorth).
