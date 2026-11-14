@@ -33,6 +33,7 @@ pub const WALLET_NETWORK: Network = Network::Mainnet;
 
 pub const DEFAULT_API_BASE_URL: &str = match option_env!("NORTHBOUND_API_BASE_URL") {
     Some(url) => url,
+    None if cfg!(feature = "regtest") => "http://127.0.0.1:3000",
     None => "http://13.55.12.147",
 };
 

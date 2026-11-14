@@ -1,4 +1,3 @@
-use crate::config::CURRENCY_TICKER;
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
 use dioxus::prelude::*;
@@ -39,10 +38,6 @@ pub(crate) fn Sidebar() -> Element {
     ];
     rsx! {
         aside { class: "sidebar",
-            div { class: "wallet-identity",
-                strong { "Personal wallet" }
-                span { "{CURRENCY_TICKER} · Local keys" }
-            }
             nav { class: "sidebar-nav", aria_label: "Wallet navigation",
                 for (route , label , path) in items {
                     Link {
