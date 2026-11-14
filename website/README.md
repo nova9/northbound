@@ -1,22 +1,52 @@
 # Northbound website
 
-Static HTML and CSS, using the wallet's logo and visual identity. No build step
-or package installation is required. Open `website/index.html` to preview.
+Static HTML and CSS, using the wallet's logo and visual identity. Open
+`website/index.html` to preview without installing anything. Release deployment
+uses a small Python preparation step to fill in release metadata.
 
 ## Downloads and deployment
 
-The download button uses GitHub's `/releases/latest/download/` URL. Each stable
-release must attach its macOS Apple silicon installer using the same filename:
-`Northbound-macos-arm64.dmg`. The release workflow must rename the built installer
-to this name before uploading it. The link will not work until that asset exists
-in a published stable release; prereleases do not advance the latest stable link.
+The macOS release workflow deploys this directory to GitHub Pages after a
+published release or prerelease builds successfully and its assets are uploaded.
+The page labels prereleases explicitly. Manual packaging runs do not deploy the
+public website. Rerunning an older release also skips deployment when it is no
+longer the most recently published release, comparing publication dates across
+both stable releases and prereleases.
 
-No version or link changes are needed in the website for subsequent releases.
-Add platform-specific buttons when their packages are available.
+`scripts/build-website.py` reads the published release metadata and fills in the
+version, macOS ZIP download URL, and release-notes URL. It requires both
+`Northbound-<tag>-macos-arm64.zip` and its `.sha256` file before deployment, so a
+missing download fails the job instead of publishing a broken link. Generated
+files are uploaded as a Pages artifact; source HTML is not rewritten or committed.
+Without this step, the preview's download link opens the releases list.
 
-Deploy `index.html`, `styles.css`, and `assets/` from `website/` to
-GitHub Pages using GitHub Actions. Assets use relative paths so both a repository
-subpath and a custom domain work. Deployment workflows are configured separately.
+One-time repository setup:
+
+1. Open **Settings → Pages → Build and deployment** and select **GitHub Actions**
+   as the source.
+2. If the `github-pages` environment restricts deployment branches, allow the
+   release tags as well; this workflow deploys from the tagged source.
+3. Publish a release or prerelease containing this workflow and `website/`.
+
+The website's custom domain is `northboundwallet.org`, configured in repository
+Pages settings. In Cloudflare, use DNS-only `A` records at `@` pointing to
+`185.199.108.153`, `185.199.109.153`, `185.199.110.153`, and `185.199.111.153`.
+The `api` record continues to point to the wallet API server at `13.55.12.147`.
+Enable **Enforce HTTPS** in Pages settings once its certificate is available.
+Actions-based Pages deployment does not require a `CNAME` file. Assets use
+relative paths, so the original `https://nova9.github.io/northbound/` subpath
+also works when a custom domain is not configured.
+
+To check a generated site locally:
+
+```sh
+gh api repos/nova9/northbound/releases/tags/<tag> > /tmp/northbound-release.json
+python3 scripts/build-website.py /tmp/northbound-release.json /tmp/northbound-website
+python3 -m http.server 8000 --directory /tmp/northbound-website
+```
+
+Use a new output directory for each build. Add platform-specific buttons when
+their packages are available.
 
 ## Design and review
 
