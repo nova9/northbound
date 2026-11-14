@@ -28,6 +28,7 @@ the server. Initial node/cookie failures prevent startup.
 | `POST /v1/transactions/status` | Index lookup, then daemon lookup if not yet observed |
 | `GET /v1/chain/tip` | Daemon height, preserving the existing meaning |
 | `GET /v1/fees/estimate` | Daemon fee estimate and policy floors |
+| `GET /v2/fees/estimate` | Precise daemon fee estimate and policy floors in atomic units/kvB |
 | `POST /v1/transactions/validate` | Daemon mempool acceptance |
 | `POST /v1/transactions/broadcast` | Daemon broadcast |
 
@@ -37,6 +38,16 @@ partial pages and restart. All three responses include `index` metadata with
 indexed/observed tips, node contact, pending observation, readiness, and the
 30-second freshness limit. An indexed snapshot can become outdated after it is
 observed; broadcasting does not imply the next index snapshot already contains it.
+
+`GET /v2/fees/estimate` returns `{"atomic_units_per_kvbyte":1001,"target_blocks":6}`,
+for example. One kvB is 1,000 virtual bytes. The rate is the highest of Core's
+six-block estimate, mempool minimum, and relay minimum, converted exactly from
+NORTH/kvB to integer atomic units/kvB. If the estimate is unavailable, the policy
+minimums are used. Calculate the fee as `ceil(vbytes * atomic_units_per_kvbyte / 1000)`
+using checked or widened integer arithmetic. The wallet uses this endpoint and
+rounds only the final fee; any dust change is still added to the fee.
+`/v1/fees/estimate` retains its existing `atomic_units_per_vbyte` field and rounds
+the rate up to whole atomic units/vB. Other endpoints remain on `/v1`.
 
 Errors use `{"message":"..."}`. Invalid addresses/request limits return 400,
 unavailable index data returns 503, and node failures return 502. Internal database

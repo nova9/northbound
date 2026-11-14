@@ -17,7 +17,7 @@ pub struct TransactionPlan {
 pub fn create_transaction_plan(
     mut available_utxos: Vec<VerifiedUtxo>,
     recipient_amount: u64,
-    fee_rate: u64,
+    atomic_units_per_kvbyte: u64,
     change_address: String,
 ) -> Result<TransactionPlan, String> {
     if recipient_amount < P2QRH_DUST_LIMIT {
@@ -26,7 +26,7 @@ pub fn create_transaction_plan(
         ));
     }
 
-    if fee_rate == 0 {
+    if atomic_units_per_kvbyte == 0 {
         return Err("fee rate must be greater than zero".to_owned());
     }
 
@@ -43,7 +43,7 @@ pub fn create_transaction_plan(
         selected_inputs.push(utxo);
 
         let input_count = selected_inputs.len();
-        let fee_with_change = estimated_fee(input_count, true, fee_rate)?;
+        let fee_with_change = estimated_fee(input_count, true, atomic_units_per_kvbyte)?;
         let required_with_change = recipient_amount
             .checked_add(fee_with_change)
             .ok_or_else(|| "payment amount and fee are too large".to_owned())?;
@@ -70,7 +70,7 @@ pub fn create_transaction_plan(
             });
         }
 
-        let fee_without_change = estimated_fee(input_count, false, fee_rate)?;
+        let fee_without_change = estimated_fee(input_count, false, atomic_units_per_kvbyte)?;
         let required_without_change = recipient_amount
             .checked_add(fee_without_change)
             .ok_or_else(|| "payment amount and fee are too large".to_owned())?;
@@ -93,7 +93,11 @@ pub fn create_transaction_plan(
     Err("insufficient confirmed funds for the payment and fee".to_owned())
 }
 
-fn estimated_fee(input_count: usize, include_change: bool, fee_rate: u64) -> Result<u64, String> {
+fn estimated_fee(
+    input_count: usize,
+    include_change: bool,
+    atomic_units_per_kvbyte: u64,
+) -> Result<u64, String> {
     let additional_inputs = input_count
         .checked_sub(1)
         .ok_or_else(|| "transaction must contain at least one input".to_owned())?;
@@ -110,9 +114,10 @@ fn estimated_fee(input_count: usize, include_change: bool, fee_rate: u64) -> Res
         .and_then(|size| size.checked_add(change_vbytes))
         .ok_or_else(|| "transaction size is too large".to_owned())?;
 
-    estimated_vbytes
-        .checked_mul(fee_rate)
-        .ok_or_else(|| "transaction fee is too large".to_owned())
+    // Preserve the rate's kvB precision and round up only the total atomic fee.
+    // Widen before multiplication so large, untrusted rates cannot overflow.
+    let fee = u128::from(estimated_vbytes) * u128::from(atomic_units_per_kvbyte);
+    u64::try_from(fee.div_ceil(1000)).map_err(|_| "transaction fee is too large".to_owned())
 }
 
 #[cfg(test)]
@@ -145,7 +150,7 @@ mod tests {
         let plan = create_transaction_plan(
             vec![confirmed_utxo(1_000_000_000, 0)],
             100_000_000,
-            10,
+            10_000,
             "rnorth1zchange".to_owned(),
         )
         .expect("payment should be affordable");
@@ -162,7 +167,7 @@ mod tests {
         let plan = create_transaction_plan(
             vec![confirmed_utxo(10_000, 0)],
             8_690,
-            10,
+            10_000,
             "rnorth1zchange".to_owned(),
         )
         .expect("payment should use its dust remainder as fee");
@@ -177,7 +182,7 @@ mod tests {
         let error = create_transaction_plan(
             vec![confirmed_utxo(100_000_000, 0)],
             100_000_000,
-            10,
+            10_000,
             "rnorth1zchange".to_owned(),
         )
         .expect_err("fee should make the payment unaffordable");
@@ -185,6 +190,42 @@ mod tests {
         assert_eq!(
             error,
             "insufficient confirmed funds for the payment and fee"
+        );
+    }
+
+    #[test]
+    fn fractional_vbyte_rate_rounds_only_the_final_fee() {
+        let plan = create_transaction_plan(
+            vec![confirmed_utxo(100_000, 0)],
+            50_000,
+            1_001,
+            "rnorth1zchange".to_owned(),
+        )
+        .unwrap();
+
+        // 164 vB * 1,001 units/kvB = 164.164 units, rounded up to 165.
+        assert_eq!(plan.fee, 165);
+        assert_eq!(plan.change, 49_835);
+    }
+
+    #[test]
+    fn kvbyte_fee_calculation_handles_exact_rates_and_large_values() {
+        assert_eq!(super::estimated_fee(1, true, 1_000).unwrap(), 164);
+        assert_eq!(super::estimated_fee(1, false, 1_001).unwrap(), 122);
+        assert_eq!(super::estimated_fee(2, true, 1_001).unwrap(), 232);
+        assert!(super::estimated_fee(usize::MAX, true, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn zero_rate_is_rejected() {
+        assert!(
+            create_transaction_plan(
+                vec![confirmed_utxo(100_000, 0)],
+                50_000,
+                0,
+                "rnorth1zchange".to_owned(),
+            )
+            .is_err()
         );
     }
 }

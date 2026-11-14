@@ -260,6 +260,39 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         .await
         .unwrap();
     assert!(fee["atomic_units_per_vbyte"].as_u64().unwrap() > 0);
+    let precise_fee: Value = client
+        .get(format!("{url}/v2/fees/estimate"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let estimate = cli_json(&["estimatesmartfee", "6"]);
+    let mempool = cli_json(&["getmempoolinfo"]);
+    let network = cli_json(&["getnetworkinfo"]);
+    let mut expected_rate = 0;
+    for value in [
+        &estimate["feerate"],
+        &mempool["mempoolminfee"],
+        &network["relayfee"],
+    ] {
+        if value.is_null() {
+            continue;
+        }
+        let rate = truenorth_rpc::atomic_units(value.as_number().unwrap()).unwrap() as u64;
+        expected_rate = expected_rate.max(rate);
+    }
+    assert_eq!(
+        precise_fee,
+        json!({"atomic_units_per_kvbyte": expected_rate, "target_blocks": 6})
+    );
+    assert_eq!(
+        fee,
+        json!({"atomic_units_per_vbyte": expected_rate.div_ceil(1000), "target_blocks": 6})
+    );
     let tip: Value = client
         .get(format!("{url}/v1/chain/tip"))
         .send()

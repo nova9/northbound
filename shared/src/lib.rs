@@ -11,6 +11,12 @@ pub struct FeeEstimate {
     pub target_blocks: u16,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FeeEstimateV2 {
+    pub atomic_units_per_kvbyte: u64,
+    pub target_blocks: u16,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionHistoryRequest {
     pub addresses: Vec<String>,

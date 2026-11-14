@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, json};
+use serde_json::{Number, Value, json};
 
 use crate::{Error, NodeClient, Result, atomic_units, decode_hash};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FeeEstimate {
-    pub atomic_units_per_vbyte: u64,
+    pub atomic_units_per_kvbyte: u64,
     pub target_blocks: u16,
 }
 
@@ -27,24 +27,9 @@ impl NodeClient {
         let estimate = self.call_rpc("estimatesmartfee", json!([6])).await?;
         let mempool = self.call_rpc("getmempoolinfo", json!([])).await?;
         let network = self.call_rpc("getnetworkinfo", json!([])).await?;
-        let mut rate = 0;
-        for (value, optional) in [
-            (&estimate["feerate"], true),
-            (&mempool["mempoolminfee"], false),
-            (&network["relayfee"], false),
-        ] {
-            if optional && value.is_null() {
-                continue;
-            }
-            let number: Number = serde_json::from_value(value.clone())
-                .map_err(|_| Error::InvalidData("invalid fee rate".into()))?;
-            rate = rate.max(round_fee_rate(&number)?);
-        }
-        if rate == 0 {
-            return Err(Error::InvalidData("node returned a zero fee rate".into()));
-        }
+        let rate = select_fee_rate(&estimate, &mempool, &network)?;
         Ok(FeeEstimate {
-            atomic_units_per_vbyte: rate,
+            atomic_units_per_kvbyte: rate,
             target_blocks: 6,
         })
     }
@@ -90,13 +75,26 @@ impl NodeClient {
     }
 }
 
-fn round_fee_rate(number: &Number) -> Result<u64> {
-    let per_kilovbyte = atomic_units(number)?;
-    let rounded = per_kilovbyte
-        .checked_add(999)
-        .ok_or_else(|| Error::InvalidData("fee rate overflow".into()))?
-        / 1000;
-    Ok(rounded as u64)
+fn select_fee_rate(estimate: &Value, mempool: &Value, network: &Value) -> Result<u64> {
+    let mut rate = 0;
+    for (value, optional) in [
+        (&estimate["feerate"], true),
+        (&mempool["mempoolminfee"], false),
+        (&network["relayfee"], false),
+    ] {
+        if optional && value.is_null() {
+            continue;
+        }
+        let number: Number = serde_json::from_value(value.clone())
+            .map_err(|_| Error::InvalidData("invalid fee rate".into()))?;
+        // Core reports NORTH/kvB; converting to atomic units preserves its precision.
+        let per_kvbyte = atomic_units(&number)? as u64;
+        rate = rate.max(per_kvbyte);
+    }
+    if rate == 0 {
+        return Err(Error::InvalidData("node returned a zero fee rate".into()));
+    }
+    Ok(rate)
 }
 
 pub fn validate_transaction_hex(hex: &str) -> Result<()> {
@@ -115,16 +113,49 @@ pub fn validate_transaction_hex(hex: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{round_fee_rate, validate_transaction_hex};
+    use super::{select_fee_rate, validate_transaction_hex};
+    use serde_json::json;
 
     #[test]
-    fn fee_rate_rounds_up_without_floating_point() {
-        for (value, expected) in [("0.00001000", 1), ("0.00001001", 2), ("1e-5", 1)] {
+    fn fee_rate_preserves_kvbyte_precision_and_respects_policy_floors() {
+        for (estimate, mempool, relay, expected) in [
+            ("0.00001001", "0.00001000", "0.00001000", 1001),
+            ("0.00001001", "0.00001501", "0.00001000", 1501),
+            ("0.00001001", "0.00001000", "0.00002001", 2001),
+            ("null", "0.00001000", "1e-5", 1000),
+        ] {
             assert_eq!(
-                round_fee_rate(&serde_json::from_str(value).unwrap()).unwrap(),
+                select_fee_rate(
+                    &json!({"feerate": serde_json::from_str::<serde_json::Value>(estimate).unwrap()}),
+                    &json!({"mempoolminfee": serde_json::from_str::<serde_json::Value>(mempool).unwrap()}),
+                    &json!({"relayfee": serde_json::from_str::<serde_json::Value>(relay).unwrap()}),
+                ).unwrap(),
                 expected
             );
         }
+    }
+
+    #[test]
+    fn rejects_invalid_fee_rates_and_missing_policy_floors() {
+        for value in [json!(-1), json!("invalid"), json!(0.000000001)] {
+            assert!(
+                select_fee_rate(
+                    &json!({"feerate": value}),
+                    &json!({"mempoolminfee": 0.00001}),
+                    &json!({"relayfee": 0.00001})
+                )
+                .is_err()
+            );
+        }
+        assert!(select_fee_rate(&json!({}), &json!({}), &json!({"relayfee": 0.00001})).is_err());
+        assert!(
+            select_fee_rate(
+                &json!({}),
+                &json!({"mempoolminfee": 0}),
+                &json!({"relayfee": 0})
+            )
+            .is_err()
+        );
     }
 
     #[test]

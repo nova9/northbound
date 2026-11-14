@@ -73,10 +73,10 @@ pub(crate) fn Send() -> Element {
         .and_then(|utxos| utxos.as_ref().ok())
         .and_then(|utxos| calculate_spendable_balance(utxos).ok());
     let fee_estimate_state = fee_estimate.read().clone();
-    let fee_rate = fee_estimate_state
+    let atomic_units_per_kvbyte = fee_estimate_state
         .as_ref()
         .and_then(|estimate| estimate.as_ref().ok())
-        .map(|estimate| estimate.atomic_units_per_vbyte);
+        .map(|estimate| estimate.atomic_units_per_kvbyte);
 
     let entered_amount = parse_north(&amount()).ok();
     let reviewed_plan = transaction_plan();
@@ -118,7 +118,7 @@ pub(crate) fn Send() -> Element {
                             &recipient(),
                             &amount(),
                             &verified_utxos_state,
-                            fee_rate,
+                            atomic_units_per_kvbyte,
                             &context,
                         );
 
@@ -193,8 +193,8 @@ pub(crate) fn Send() -> Element {
                                     None => "Loading node fee estimate…".to_owned(),
                                     Some(Err(_)) => "Fee estimate unavailable".to_owned(),
                                     Some(Ok(estimate)) => format!(
-                                        "Node estimate · {} atomic units/vB · {} block target",
-                                        estimate.atomic_units_per_vbyte,
+                                        "Node estimate · {} atomic units/kvB · {} block target",
+                                        estimate.atomic_units_per_kvbyte,
                                         estimate.target_blocks,
                                     ),
                                 }
@@ -214,7 +214,7 @@ pub(crate) fn Send() -> Element {
                     button {
                         class: "button primary",
                         r#type: "submit",
-                        disabled: available_balance.is_none() || fee_rate.is_none(),
+                        disabled: available_balance.is_none() || atomic_units_per_kvbyte.is_none(),
                         "Review transaction"
                     }
                 }
@@ -439,7 +439,7 @@ fn prepare_transaction_plan(
     recipient: &str,
     amount: &str,
     verified_utxos_state: &Option<Result<Vec<VerifiedUtxo>, String>>,
-    fee_rate: Option<u64>,
+    atomic_units_per_kvbyte: Option<u64>,
     context: &AppContext,
 ) -> Result<TransactionPlan, String> {
     p2qrh::script_pubkey_from_address(recipient, WALLET_NETWORK).map_err(|message| {
@@ -455,8 +455,8 @@ fn prepare_transaction_plan(
         return Err("Enter an amount greater than zero.".to_owned());
     }
 
-    let fee_rate =
-        fee_rate.ok_or_else(|| "Wait for the network fee estimate to load.".to_owned())?;
+    let atomic_units_per_kvbyte = atomic_units_per_kvbyte
+        .ok_or_else(|| "Wait for the network fee estimate to load.".to_owned())?;
 
     let verified_utxos = verified_utxos_state
         .as_ref()
@@ -471,7 +471,12 @@ fn prepare_transaction_plan(
         .ok_or_else(|| "Unlock the wallet again to prepare the transaction.".to_owned())?;
     let change_address = wallet.next_change_address()?;
 
-    create_transaction_plan(verified_utxos, amount, fee_rate, change_address)
+    create_transaction_plan(
+        verified_utxos,
+        amount,
+        atomic_units_per_kvbyte,
+        change_address,
+    )
 }
 
 fn parse_north(value: &str) -> Result<u64, String> {

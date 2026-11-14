@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use shared::{
     AddressActivityRequest, AddressActivityResponse, ApiErrorResponse,
-    BroadcastTransactionResponse, ChainTip, FeeEstimate, IndexStatus, SignedTransactionRequest,
+    BroadcastTransactionResponse, ChainTip, FeeEstimateV2, IndexStatus, SignedTransactionRequest,
     TransactionStatusRequest, TransactionStatusResponse, TransactionValidation, UtxoRequest,
     UtxoResponse, WalletUtxo,
 };
@@ -46,9 +46,9 @@ pub async fn fetch_chain_height() -> Result<u64, String> {
     Ok(chain_tip.height)
 }
 
-pub async fn fetch_fee_estimate() -> Result<FeeEstimate, String> {
+pub async fn fetch_fee_estimate() -> Result<FeeEstimateV2, String> {
     let response = http_client()?
-        .get(endpoint("/v1/fees/estimate")?)
+        .get(endpoint("/v2/fees/estimate")?)
         .send()
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
@@ -58,7 +58,7 @@ pub async fn fetch_fee_estimate() -> Result<FeeEstimate, String> {
         .map_err(|error| format!("wallet server could not estimate the network fee: {error}"))?;
 
     response
-        .json::<FeeEstimate>()
+        .json::<FeeEstimateV2>()
         .await
         .map_err(|error| format!("wallet server returned an invalid fee estimate: {error}"))
 }

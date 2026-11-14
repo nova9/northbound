@@ -293,7 +293,7 @@ mod tests {
         let first_plan = create_transaction_plan(
             vec![first_input, second_input],
             100_000_000,
-            10,
+            10_000,
             first_change_address,
         )
         .expect("two inputs should fund the first payment");
@@ -336,7 +336,7 @@ mod tests {
         let second_plan = create_transaction_plan(
             vec![first_change_output],
             5_000_000,
-            10,
+            10_000,
             second_change_address,
         )
         .expect("the first transaction's change should fund a second payment");

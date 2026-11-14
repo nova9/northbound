@@ -36,7 +36,7 @@ pub fn create_signed_payment_from_receiving_utxo(
     receiving_index: u32,
     recipient_address: &str,
     recipient_amount: u64,
-    fee_rate: u64,
+    atomic_units_per_kvbyte: u64,
 ) -> Result<String, String> {
     let transaction_id = Txid::from_str(transaction_id)
         .map_err(|_| "funding transaction ID is invalid".to_owned())?;
@@ -53,7 +53,7 @@ pub fn create_signed_payment_from_receiving_utxo(
     let plan = transaction_plan::create_transaction_plan(
         vec![available_utxo],
         recipient_amount,
-        fee_rate,
+        atomic_units_per_kvbyte,
         change_address,
     )?;
     let mut transaction =

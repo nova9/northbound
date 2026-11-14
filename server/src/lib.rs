@@ -39,6 +39,7 @@ pub fn build_router(state: Arc<AppState>, requests_per_second: NonZeroU32) -> Ro
     Router::new()
         .route("/v1/chain/tip", get(node_routes::chain_tip))
         .route("/v1/fees/estimate", get(node_routes::fee_estimate))
+        .route("/v2/fees/estimate", get(node_routes::fee_estimate_v2))
         .route("/v1/addresses/activity", post(api::address_activity))
         .route("/v1/transactions", post(api::transactions))
         .route(

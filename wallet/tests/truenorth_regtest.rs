@@ -96,9 +96,17 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
         0,
         &return_address,
         50_000_000,
-        1,
+        1_001,
     )
     .expect("Northbound should sign a payment back to the funding wallet");
+
+    let transaction: bitcoin::Transaction =
+        bitcoin::consensus::deserialize(&hex::decode(&signed_transaction).unwrap()).unwrap();
+    let mut output_total = 0;
+    for output in &transaction.output {
+        output_total += output.value.to_sat();
+    }
+    assert_eq!(100_000_000 - output_total, 165);
 
     // Ask Core whether consensus and mempool rules accept Northbound's signed
     // transaction before broadcasting it.
@@ -201,7 +209,7 @@ fn core_validates_northbound_p2qrh_witnesses_and_descriptor() {
         1,
         &recipient,
         50_000_000,
-        1,
+        1_001,
     )
     .expect("Northbound should sign its funded output");
 
