@@ -1,62 +1,114 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 
-set -euo pipefail
+set -eu
 
-if [[ $# -ne 0 ]]; then
-    echo "Usage: $0 (update TRUENORTH_VERSION to select a release)" >&2
+if [ "$#" -gt 1 ]; then
+    echo "Usage: $0 [version] (defaults to TRUENORTH_VERSION)" >&2
     exit 1
 fi
 
-script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-project_directory="$(cd -- "$script_directory/.." && pwd)"
-version_file="$project_directory/TRUENORTH_VERSION"
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository_directory=$(dirname "$script_directory")
 
-if [[ ! -f "$version_file" ]]; then
-    echo "Missing TrueNorth version file: $version_file" >&2
+. "$script_directory/truenorth-release.sh"
+read_truenorth_release_paths "$repository_directory" "${1:-}"
+
+archive_name="truenorth-$release_tag-$release_platform.$archive_extension"
+release_url="https://github.com/truenorth-project/truenorth/releases/download/$release_tag/$archive_name"
+archive_path="$cache_directory/$archive_name"
+
+# Cache downloads so repeated test runs can start without another download.
+if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download TrueNorth Core." >&2
     exit 1
 fi
 
-truenorth_version="$(cat "$version_file")"
+mkdir -p "$cache_directory"
 
-if [[ -z "$truenorth_version" ]]; then
-    echo "TrueNorth version file is empty." >&2
+download_file() {
+    source_url=$1
+    destination=$2
+
+    if [ -f "$destination" ]; then
+        return
+    fi
+
+    temporary_file="${destination}.download"
+    rm -f "$temporary_file"
+
+    echo "Downloading $(basename "$destination")..."
+    curl --fail --location "$source_url" --output "$temporary_file"
+    mv "$temporary_file" "$destination"
+}
+
+checksum_name="${archive_name}.sha256"
+checksum_url="${release_url}.sha256"
+checksum_path="$cache_directory/$checksum_name"
+
+download_file "$release_url" "$archive_path"
+download_file "$checksum_url" "$checksum_path"
+
+# Never extract or execute an archive that does not match its published hash.
+expected_checksum=$(awk 'NR == 1 { print $1 }' "$checksum_path")
+
+if command -v sha256sum >/dev/null 2>&1; then
+    actual_checksum=$(sha256sum "$archive_path" | awk '{ print $1 }')
+elif command -v shasum >/dev/null 2>&1; then
+    actual_checksum=$(shasum -a 256 "$archive_path" | awk '{ print $1 }')
+else
+    echo "sha256sum or shasum is required to verify the download." >&2
     exit 1
 fi
 
-system_name="$(uname -s)"
-machine_architecture="$(uname -m)"
+if [ "$actual_checksum" != "$expected_checksum" ]; then
+    echo "TrueNorth archive checksum does not match." >&2
+    rm -f "$archive_path"
+    exit 1
+fi
 
-case "$system_name:$machine_architecture" in
-    Darwin:arm64) release_platform="macos-arm64" ;;
-    Linux:x86_64 | Linux:amd64) release_platform="linux-x86_64" ;;
-    *)
-        echo "Unsupported development platform: $system_name $machine_architecture" >&2
+echo "Verified $archive_name"
+
+# Install only the daemon and CLI used by development and integration tests.
+
+install_truenorth_binaries() (
+    extraction_directory=$(mktemp -d "$cache_directory/extract.XXXXXX")
+    trap 'rm -rf "$extraction_directory"' EXIT
+
+    case "$archive_extension" in
+        tar.gz)
+            tar -xzf "$archive_path" -C "$extraction_directory"
+            ;;
+        zip)
+            if ! command -v unzip >/dev/null 2>&1; then
+                echo "unzip is required to extract the Windows archive." >&2
+                exit 1
+            fi
+
+            unzip -q "$archive_path" -d "$extraction_directory"
+            ;;
+    esac
+
+    binary_directory=$(find "$extraction_directory" \
+        -type f \
+        -name "truenorthd$executable_extension" \
+        -path '*/bin/*' \
+        -exec dirname {} \; \
+        -quit)
+
+    if [ -z "$binary_directory" ] || [ ! -f "$binary_directory/truenorth-cli$executable_extension" ]; then
+        echo "The archive does not contain TrueNorth Core binaries." >&2
         exit 1
-        ;;
-esac
+    fi
 
-release_tag="v${truenorth_version#v}"
-archive_name="truenorth-$release_tag-$release_platform.tar.gz"
-archive_url="https://github.com/truenorth-project/truenorth/releases/download/$release_tag/$archive_name"
-install_directory="$project_directory/.local/truenorth-bin"
-temporary_directory="$(mktemp -d)"
+    mkdir -p "$install_directory"
+    cp "$binary_directory/truenorthd$executable_extension" "$daemon_path"
+    cp "$binary_directory/truenorth-cli$executable_extension" "$cli_path"
+    chmod +x "$daemon_path" "$cli_path"
+)
 
-trap 'rm -rf "$temporary_directory"' EXIT
-
-echo "Downloading $archive_name..."
-curl --fail --location "$archive_url" --output "$temporary_directory/truenorth.tar.gz"
-tar -xzf "$temporary_directory/truenorth.tar.gz" -C "$temporary_directory"
-
-binary_directory="$(find "$temporary_directory" -type f -name truenorthd -path '*/bin/*' -exec dirname {} \; -quit)"
-
-if [[ -z "$binary_directory" || ! -x "$binary_directory/truenorth-cli" ]]; then
-    echo "The archive does not contain bin/truenorthd and bin/truenorth-cli." >&2
-    exit 1
+if [ ! -f "$daemon_path" ] || [ ! -f "$cli_path" ]; then
+    echo "Extracting TrueNorth Core..."
+    install_truenorth_binaries
 fi
-
-mkdir -p "$install_directory"
-cp "$binary_directory/truenorthd" "$install_directory/truenorthd"
-cp "$binary_directory/truenorth-cli" "$install_directory/truenorth-cli"
-chmod +x "$install_directory/truenorthd" "$install_directory/truenorth-cli"
 
 echo "Installed TrueNorth binaries in $install_directory"

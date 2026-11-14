@@ -76,9 +76,20 @@ Run the P2QRH checks against an isolated TrueNorth Core regtest node:
 ```
 
 Development downloads and integration tests use the Core release pinned in
-[`TRUENORTH_VERSION`](TRUENORTH_VERSION). The integration script checksums its
-download and removes its temporary chain on exit. Deployment versions under
-`server/devops/` are managed independently.
+[`TRUENORTH_VERSION`](TRUENORTH_VERSION). All local regtest scripts use the shared
+binaries in `.local/truenorth-bin/<version>/<platform>/`. The integration script
+calls the downloader, reuses cached releases, and removes its temporary chain
+on exit. Downloads are verified against the release's SHA-256 checksum.
+
+To download another release without changing the project's selected version:
+
+```bash
+./scripts/download-truenorth.sh 30.5.2
+```
+
+Versions with a `v` prefix are also accepted. Update `TRUENORTH_VERSION` to select
+which release the development and integration scripts use. Deployment versions
+under `server/devops/` are managed independently.
 See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
 with Core's consensus tests.
 

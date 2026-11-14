@@ -11,7 +11,11 @@ receiving_address="$1"
 amount="${2:-10}"
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_directory="$(cd -- "$script_directory/.." && pwd)"
-cli="$project_directory/.local/truenorth-bin/truenorth-cli"
+
+. "$script_directory/truenorth-release.sh"
+read_truenorth_release_paths "$project_directory"
+
+cli="$cli_path"
 data_directory="$project_directory/.local/truenorth"
 
 if [[ ! -x "$cli" ]]; then

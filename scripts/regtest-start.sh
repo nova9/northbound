@@ -4,9 +4,12 @@ set -euo pipefail
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_directory="$(cd -- "$script_directory/.." && pwd)"
-binary_directory="$project_directory/.local/truenorth-bin"
+
+. "$script_directory/truenorth-release.sh"
+read_truenorth_release_paths "$project_directory"
+
 data_directory="$project_directory/.local/truenorth"
-daemon="$binary_directory/truenorthd"
+daemon="$daemon_path"
 
 if [[ ! -x "$daemon" ]]; then
     echo "Run scripts/download-truenorth.sh first." >&2
