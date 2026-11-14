@@ -49,13 +49,23 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
       - name: Archive macOS app
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
+          build_version=${RELEASE_TAG:-dev-${GITHUB_SHA:0:7}}
+          case "$build_version" in
+            *[!a-zA-Z0-9._-]*)
+              echo "Release tag must contain only letters, numbers, dots, underscores, and hyphens." >&2
+              exit 1
+              ;;
+          esac
+          archive_name="Northbound-${build_version}-macos-arm64.zip"
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
             target/dx/Northbound/bundle/macos/macos/Northbound.app \
-            dist/Northbound-macos-arm64.zip
+            "dist/$archive_name"
           cd dist
-          shasum -a 256 Northbound-macos-arm64.zip > Northbound-macos-arm64.zip.sha256
+          shasum -a 256 "$archive_name" > "$archive_name.sha256"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
