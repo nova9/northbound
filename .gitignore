@@ -1,8 +1,11 @@
 /target
 .DS_Store
 /.local/
-/ANNOUNCEMENT.md
 
 /.agents/
 /.codex/
 /.impeccable/
+
+# Temporary files
+/ANNOUNCEMENT.md
+/INDEXER_IMPLEMENTATION.md
