@@ -1,3 +1,8 @@
+#![allow(
+    unreachable_code,
+    reason = "Routable generates unreachable error handling for the infallible String route parameter"
+)]
+
 use dioxus::prelude::*;
 
 use crate::ui::layout::AppLayout;
@@ -7,10 +12,6 @@ use crate::ui::pages::{
 };
 
 #[derive(Clone, Routable, PartialEq)]
-#[allow(
-    unreachable_code,
-    reason = "Routable generates unreachable error handling for the infallible String route parameter"
-)]
 #[rustfmt::skip]
 pub(crate) enum Route {
     #[layout(AppLayout)]
