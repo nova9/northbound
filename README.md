@@ -108,8 +108,8 @@ To download another release without changing the project's selected version:
 Versions with a `v` prefix are also accepted. Update `TRUENORTH_VERSION` to select
 which release the development and integration scripts use. Deployment versions
 under `server/devops/` are managed independently.
-See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
-with Core's consensus tests.
+See [test conventions and commands](TESTING.md) for the shared unit-test layout
+and isolated wallet, indexer, and server regtest suites.
 
 The [server](server/README.md) starts the [SQLite indexer](indexer/README.md),
 follows reorganizations, and serves wallet data through indexed queries. It uses

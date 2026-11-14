@@ -207,3 +207,30 @@ fn decode_rpc_transaction(rpc: RpcTransaction) -> Result<Transaction> {
         outputs,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::decode_block;
+    use serde_json::json;
+
+    #[test]
+    fn malformed_rpc_block_fields_are_rejected() {
+        let valid = json!({
+            "hash": "01".repeat(32), "height": 0, "time": 1000,
+            "tx": [{"txid": "02".repeat(32), "vin": [{"coinbase": "00"}],
+                "vout": [{"n": 0, "value": 512, "scriptPubKey": {"hex": "6a"}}]}]
+        });
+        for (pointer, value) in [
+            ("/hash", json!("not hex")),
+            ("/height", json!(-1)),
+            ("/tx/0/vout/0/n", json!(2)),
+            ("/tx/0/vout/0/value", json!(-1)),
+            ("/tx/0/vout/0/scriptPubKey/hex", json!("zz")),
+            ("/tx/0/vin", json!([])),
+        ] {
+            let mut malformed = valid.clone();
+            *malformed.pointer_mut(pointer).unwrap() = value;
+            assert!(decode_block(&malformed.to_string()).is_err(), "{pointer}");
+        }
+    }
+}

@@ -242,6 +242,8 @@ For blockchain-specific code, explain unfamiliar concepts such as UTXOs, witness
 
 ## Testing
 
+Follow [TESTING.md](TESTING.md) for the shared test layout, unit-test commands, and isolated TrueNorth regtest workflow across all crates.
+
 - Test meaningful behavior, not implementation details.
 - Keep tests small and readable.
 - Prefer realistic test data.

@@ -11,11 +11,11 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use shared::{AddressActivityResponse, TransactionHistory, UtxoResponse};
 use support::{
-    ServerProcess, broadcast, cli, cli_json, post, sign_spend, wait_history, wait_ready,
+    ServerProcess, broadcast, cli_json, post, run_cli, sign_spend, wait_history, wait_ready,
 };
 
 #[tokio::test]
-#[ignore = "requires isolated TrueNorth; run scripts/test-truenorth-integration.sh server"]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh server"]
 async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     assert_eq!(env::var("TRUENORTH_TEST_ISOLATED").as_deref(), Ok("1"));
     assert_eq!(cli_json(&["getblockchaininfo"])["blocks"], 0);
@@ -71,15 +71,15 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         assert_eq!(validated["scriptPubKey"], script);
     }
 
-    let mining = cli(&["getnewaddress"]);
-    cli(&["generatetoaddress", "101", &mining]);
+    let mining = run_cli(&["getnewaddress"]);
+    run_cli(&["generatetoaddress", "101", &mining]);
     wait_ready(&client, &url, 101).await;
-    let receiving = cli(&["getnewaddress"]);
-    let change = cli(&["getnewaddress"]);
-    let change2 = cli(&["getnewaddress"]);
-    let recipient = cli(&["getnewaddress"]);
+    let receiving = run_cli(&["getnewaddress"]);
+    let change = run_cli(&["getnewaddress"]);
+    let change2 = run_cli(&["getnewaddress"]);
+    let recipient = run_cli(&["getnewaddress"]);
     let addresses = vec![receiving.clone(), change.clone(), change2.clone()];
-    let payment = cli(&[
+    let payment = run_cli(&[
         "-named",
         "sendtoaddress",
         &format!("address={receiving}"),
@@ -106,7 +106,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
             .await
             .unwrap();
     assert!(pending_utxos.utxos.is_empty());
-    cli(&["generatetoaddress", "1", &mining]);
+    run_cli(&["generatetoaddress", "1", &mining]);
     wait_history(&client, &url, &addresses, &payment, 1).await;
     let utxos: UtxoResponse = post(&client, &url, "/v1/utxos", json!({"addresses": addresses}))
         .await
@@ -183,10 +183,10 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         1
     );
 
-    cli(&["invalidateblock", mined[0].as_str().unwrap()]);
-    cli(&["generateblock", &mining, "[]"]);
+    run_cli(&["invalidateblock", mined[0].as_str().unwrap()]);
+    run_cli(&["generateblock", &mining, "[]"]);
     wait_history(&client, &url, &addresses, &replacement, 0).await;
-    cli(&["generatetoaddress", "1", &mining]);
+    run_cli(&["generatetoaddress", "1", &mining]);
     wait_history(&client, &url, &addresses, &replacement, 1).await;
 
     let first: TransactionHistory = post(
@@ -214,7 +214,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         first.transactions[0].transaction_id,
         second.transactions[0].transaction_id
     );
-    cli(&["generatetoaddress", "1", &mining]);
+    run_cli(&["generatetoaddress", "1", &mining]);
     wait_ready(&client, &url, 105).await;
     let response = post(
         &client,
@@ -297,7 +297,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         1
     );
 
-    cli(&["stop"]);
+    run_cli(&["stop"]);
     for _ in 0..200 {
         if client
             .get(format!("{url}/ready"))

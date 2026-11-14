@@ -17,7 +17,7 @@ impl Drop for ServerProcess {
     }
 }
 
-pub fn cli(arguments: &[&str]) -> String {
+pub fn run_cli(arguments: &[&str]) -> String {
     assert_eq!(env::var("TRUENORTH_TEST_ISOLATED").as_deref(), Ok("1"));
     let output = Command::new(env::var_os("TRUENORTH_TEST_CLI").unwrap())
         .arg("-regtest")
@@ -43,7 +43,7 @@ pub fn cli(arguments: &[&str]) -> String {
 }
 
 pub fn cli_json(arguments: &[&str]) -> Value {
-    serde_json::from_str(&cli(arguments)).unwrap()
+    serde_json::from_str(&run_cli(arguments)).unwrap()
 }
 
 pub async fn post(client: &Client, base: &str, path: &str, body: Value) -> reqwest::Response {
@@ -104,7 +104,7 @@ pub async fn wait_history(
 
 pub fn sign_spend(txid: &str, vout: u32, outputs: Value) -> String {
     let inputs = json!([{"txid": txid, "vout": vout}]);
-    let raw = cli(&[
+    let raw = run_cli(&[
         "createrawtransaction",
         &inputs.to_string(),
         &outputs.to_string(),

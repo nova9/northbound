@@ -1,13 +1,15 @@
+mod support;
+
 use std::env;
-use std::process::Command;
 
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::{Transaction, Witness};
 use serde_json::Value;
+use support::{print_balances, run_cli, run_funding_wallet_cli};
 use wallet::{create_signed_payment_from_receiving_utxo, derive_receiving_address_from_entropy};
 
 #[test]
-#[ignore = "requires TrueNorth Core regtest"]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh wallet"]
 fn northbound_receives_funds_from_core_and_sends_some_back() {
     let wallet_entropy = [0_u8; 16];
 
@@ -31,7 +33,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     let wallet_argument = format!("-rpcwallet={funding_wallet}");
 
     // Core creates and signs the transaction that funds Northbound with 1 NORTH.
-    let transaction_id = run_truenorth_cli(&[
+    let transaction_id = run_cli(&[
         &wallet_argument,
         "-named",
         "sendtoaddress",
@@ -65,7 +67,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     let funding_transaction_hex = funding_transaction["hex"]
         .as_str()
         .expect("funding transaction should contain raw transaction hex");
-    let decoded_transaction = run_truenorth_cli(&["decoderawtransaction", funding_transaction_hex]);
+    let decoded_transaction = run_cli(&["decoderawtransaction", funding_transaction_hex]);
     let decoded_transaction: Value = serde_json::from_str(&decoded_transaction)
         .expect("decoded funding transaction should be valid JSON");
     let funded_output = decoded_transaction["vout"]
@@ -101,7 +103,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     // Ask Core whether consensus and mempool rules accept Northbound's signed
     // transaction before broadcasting it.
     let transactions_to_validate = format!(r#"["{signed_transaction}"]"#);
-    let validation = run_truenorth_cli(&["testmempoolaccept", &transactions_to_validate]);
+    let validation = run_cli(&["testmempoolaccept", &transactions_to_validate]);
     let validation: Value =
         serde_json::from_str(&validation).expect("validation result should be valid JSON");
     assert_eq!(
@@ -110,7 +112,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     );
 
     // Broadcast the Northbound transaction and mine one block to confirm it.
-    let return_transaction_id = run_truenorth_cli(&["sendrawtransaction", &signed_transaction]);
+    let return_transaction_id = run_cli(&["sendrawtransaction", &signed_transaction]);
     run_funding_wallet_cli(&["generatetoaddress", "1", &mining_address]);
 
     // Confirm Core's funding wallet recognized the returned payment.
@@ -131,8 +133,7 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     // Core reports its own wallet balance. Northbound's remaining balance is
     // the change output from the transaction it created and signed.
     let core_balance = run_funding_wallet_cli(&["getbalance"]);
-    let decoded_return_transaction =
-        run_truenorth_cli(&["decoderawtransaction", &signed_transaction]);
+    let decoded_return_transaction = run_cli(&["decoderawtransaction", &signed_transaction]);
     let decoded_return_transaction: Value = serde_json::from_str(&decoded_return_transaction)
         .expect("decoded return transaction should be valid JSON");
     let northbound_change = decoded_return_transaction["vout"]
@@ -150,51 +151,8 @@ fn northbound_receives_funds_from_core_and_sends_some_back() {
     );
 }
 
-fn print_balances(step: &str, core_balance: &str, northbound_balance: &str) {
-    println!("{step}:");
-    println!("  Core funding wallet: {core_balance} NORTH");
-    println!("  Northbound wallet: {northbound_balance} NORTH");
-}
-
-fn run_funding_wallet_cli(arguments: &[&str]) -> String {
-    let funding_wallet = env::var("TRUENORTH_TEST_WALLET")
-        .expect("TRUENORTH_TEST_WALLET must name the funding wallet");
-    let wallet_argument = format!("-rpcwallet={funding_wallet}");
-    let mut wallet_arguments = vec![wallet_argument.as_str()];
-    wallet_arguments.extend_from_slice(arguments);
-
-    run_truenorth_cli(&wallet_arguments)
-}
-
-fn run_truenorth_cli(arguments: &[&str]) -> String {
-    let cli_path =
-        env::var("TRUENORTH_TEST_CLI").expect("TRUENORTH_TEST_CLI must point to truenorth-cli");
-    let data_directory = env::var("TRUENORTH_TEST_DATA_DIR")
-        .expect("TRUENORTH_TEST_DATA_DIR must point to the test node data");
-    let rpc_port =
-        env::var("TRUENORTH_TEST_RPC_PORT").expect("TRUENORTH_TEST_RPC_PORT must be set");
-
-    let output = Command::new(cli_path)
-        .arg("-regtest")
-        .arg(format!("-datadir={data_directory}"))
-        .arg(format!("-rpcport={rpc_port}"))
-        .args(arguments)
-        .output()
-        .expect("truenorth-cli should start");
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        panic!("truenorth-cli failed: {error}");
-    }
-
-    String::from_utf8(output.stdout)
-        .expect("truenorth-cli output should be UTF-8")
-        .trim()
-        .to_owned()
-}
-
 #[test]
-#[ignore = "requires TrueNorth Core regtest"]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh wallet"]
 fn core_validates_northbound_p2qrh_witnesses_and_descriptor() {
     let entropy = [0_u8; 16];
     let receiving_address = derive_receiving_address_from_entropy(&entropy, 1)
@@ -214,7 +172,7 @@ fn core_validates_northbound_p2qrh_witnesses_and_descriptor() {
     let funding = run_funding_wallet_cli(&["gettransaction", &transaction_id]);
     let funding: Value =
         serde_json::from_str(&funding).expect("funding transaction should be JSON");
-    let funding = run_truenorth_cli(&[
+    let funding = run_cli(&[
         "decoderawtransaction",
         funding["hex"].as_str().expect("funding should contain hex"),
     ]);
@@ -250,7 +208,7 @@ fn core_validates_northbound_p2qrh_witnesses_and_descriptor() {
     // Establish acceptance before trying invalid witnesses on the same UTXO.
     let transactions =
         serde_json::to_string(&[&signed_transaction]).expect("transaction list should serialize");
-    let result = run_truenorth_cli(&["testmempoolaccept", &transactions]);
+    let result = run_cli(&["testmempoolaccept", &transactions]);
     let result: Value = serde_json::from_str(&result).expect("validation should be JSON");
     assert_eq!(
         result[0]["allowed"], true,
@@ -312,7 +270,7 @@ fn check_core_rejects_malformed_witnesses(signed_transaction: &str) {
         let transactions =
             serde_json::to_string(&vec![hex::encode(serialize(&malformed_transaction))])
                 .expect("transaction list should serialize");
-        let result = run_truenorth_cli(&["testmempoolaccept", &transactions]);
+        let result = run_cli(&["testmempoolaccept", &transactions]);
         let result: Value = serde_json::from_str(&result).expect("validation should be JSON");
         assert_eq!(
             result[0]["allowed"], false,
@@ -336,12 +294,12 @@ fn check_core_descriptor_address(signed_transaction: &str, receiving_address: &s
     let transaction: Transaction = deserialize(&bytes).expect("transaction should decode");
     let public_key = hex::encode(&transaction.input[0].witness.to_vec()[1]);
     let descriptor = format!("qrh({public_key})");
-    let info = run_truenorth_cli(&["getdescriptorinfo", &descriptor]);
+    let info = run_cli(&["getdescriptorinfo", &descriptor]);
     let info: Value = serde_json::from_str(&info).expect("descriptor info should be JSON");
     let descriptor = info["descriptor"]
         .as_str()
         .expect("Core should return a descriptor");
-    let addresses = run_truenorth_cli(&["deriveaddresses", descriptor]);
+    let addresses = run_cli(&["deriveaddresses", descriptor]);
     let addresses: Value = serde_json::from_str(&addresses).expect("addresses should be JSON");
     assert_eq!(
         addresses[0], receiving_address,

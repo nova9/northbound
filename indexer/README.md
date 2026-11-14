@@ -150,9 +150,9 @@ The integration harness creates an isolated daemon and removes its temporary
 chain afterward. Invalidation and reconsideration only target that test node.
 The default harness invocation still runs wallet tests.
 
-SQLite-only checks are unit-test modules under `src/database/` and `src/queries/`,
-enabled with `#[cfg(test)]` in their implementation modules. They run with
-`cargo test -p indexer --lib` without a daemon. The daemon integration test remains
+SQLite-only checks live in inline `#[cfg(test)] mod tests` blocks at the end of
+their implementation files, following the [workspace convention](../TESTING.md).
+They run with `cargo test -p indexer --lib` without a daemon. The daemon integration test remains
 in `tests/truenorth_regtest.rs` and runs through the isolated shell harness above.
 
 The regtest test verifies P2QRH scripts and amounts against `validateaddress`

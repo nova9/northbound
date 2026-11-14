@@ -111,3 +111,37 @@ pub fn address_from_script(script: &[u8], network: &str) -> Option<String> {
     payload.extend_from_slice(hash);
     Some(base58::encode_check(&payload))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{address_from_script, decode_addresses};
+
+    #[test]
+    fn address_decoding_checks_network_checksum_and_legacy_scripts() {
+        let script =
+            hex::decode("5220d57d900d942200b8431ba4480f50edc29ca45e1ab476c5be60e628fe7b2ec551")
+                .unwrap();
+        let address = "rnorth1z647eqrv5ygqtsscm53yq758dc2w2ghs6k3mvt0nquc50u7ewc4gs0engmj";
+        assert_eq!(
+            decode_addresses(&[address.into()], "regtest").unwrap()[0].script,
+            script
+        );
+        assert!(decode_addresses(&[address.into()], "main").is_err());
+        assert!(
+            decode_addresses(&[format!("{}q", &address[..address.len() - 1])], "regtest").is_err()
+        );
+        for network in ["main", "regtest"] {
+            for script in [
+                format!("76a914{}88ac", "ab".repeat(20)),
+                format!("a914{}87", "cd".repeat(20)),
+            ] {
+                let script = hex::decode(script).unwrap();
+                let address = address_from_script(&script, network).unwrap();
+                assert_eq!(
+                    decode_addresses(&[address], network).unwrap()[0].script,
+                    script
+                );
+            }
+        }
+    }
+}

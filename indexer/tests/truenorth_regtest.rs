@@ -1,90 +1,24 @@
-#[path = "truenorth/utxo_scan.rs"]
-mod utxo_scan;
+mod support;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use indexer::{IndexDatabase, SyncProgress, synchronize_next_block};
+use indexer::{
+    IndexDatabase, IndexReader, MempoolCache, decode_addresses, refresh_mempool,
+    synchronize_next_block,
+};
 use rusqlite::{Connection, params};
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Number, json};
+use shared::WalletUtxo;
 use truenorth_rpc::NodeClient;
 
-fn run_cli(arguments: &[&str]) -> String {
-    assert_eq!(
-        env::var("TRUENORTH_TEST_ISOLATED").as_deref(),
-        Ok("1"),
-        "run scripts/test-truenorth-integration.sh indexer; never invalidate a user's node"
-    );
-    let output = Command::new(env::var_os("TRUENORTH_TEST_CLI").unwrap())
-        .arg("-regtest")
-        .arg(format!(
-            "-datadir={}",
-            env::var("TRUENORTH_TEST_DATA_DIR").unwrap()
-        ))
-        .arg(format!(
-            "-rpcport={}",
-            env::var("TRUENORTH_TEST_RPC_PORT").unwrap()
-        ))
-        .arg("-rpcwallet=funding")
-        .args(arguments)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}: {}",
-        arguments[0],
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-fn cli_json(arguments: &[&str]) -> Value {
-    serde_json::from_str(&run_cli(arguments)).unwrap()
-}
-
-async fn catch_up(node: &NodeClient, database: &mut IndexDatabase) -> (usize, usize) {
-    let mut applied = 0;
-    let mut removed = 0;
-    for _ in 0..2000 {
-        match synchronize_next_block(node, database).await.unwrap() {
-            SyncProgress::Applied(_) => applied += 1,
-            SyncProgress::RolledBack(_) => removed += 1,
-            SyncProgress::CaughtUp(_) => return (applied, removed),
-            SyncProgress::ChainChanged => {}
-        }
-    }
-    panic!("indexer did not converge");
-}
-
-fn confirmed_dump(connection: &Connection) -> Vec<String> {
-    let mut dump = Vec::new();
-    for query in [
-        "SELECT hex(hash), height, hex(previous_hash), timestamp FROM blocks ORDER BY height",
-        "SELECT hex(txid), hex(block_hash), position, is_coinbase FROM transactions ORDER BY txid",
-        "SELECT hex(txid), vout, amount, hex(script), utxo_eligible FROM outputs ORDER BY txid, vout",
-        "SELECT hex(spending_txid), vin, hex(previous_txid), previous_vout FROM spends ORDER BY spending_txid, vin",
-    ] {
-        let mut statement = connection.prepare(query).unwrap();
-        let column_count = statement.column_count();
-        let rows = statement
-            .query_map([], |row| {
-                let mut fields = Vec::new();
-                for column in 0..column_count {
-                    fields.push(format!("{:?}", row.get_ref(column)?));
-                }
-                Ok(fields.join("|"))
-            })
-            .unwrap();
-        for row in rows {
-            dump.push(row.unwrap());
-        }
-    }
-    dump
-}
+use support::{catch_up, cli_json, confirmed_dump, run_cli};
 
 #[tokio::test]
-#[ignore = "requires an isolated TrueNorth regtest node; use scripts/test-truenorth-integration.sh indexer"]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh indexer"]
 async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("index.sqlite");
@@ -117,7 +51,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
 
     let unused_address = run_cli(&["getnewaddress"]);
     assert_eq!(
-        utxo_scan::assert_matches_scan(
+        assert_matches_scan(
             &node,
             &mut database,
             &path,
@@ -132,7 +66,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     assert_eq!(catch_up(&node, &mut database).await, (101, 0));
     let mining_addresses = vec![mining_address.clone(), unused_address.clone()];
     assert_eq!(
-        utxo_scan::assert_matches_scan(&node, &mut database, &path, &mining_addresses).await,
+        assert_matches_scan(&node, &mut database, &path, &mining_addresses).await,
         0
     );
     let receiving_address = run_cli(&["getnewaddress"]);
@@ -166,7 +100,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         receiving_address.clone(),
     ];
     assert_eq!(
-        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
         0
     );
 
@@ -202,7 +136,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
     assert_eq!(catch_up(&node, &mut database).await, (0, 0));
     assert_eq!(
-        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
         0
     );
 
@@ -212,7 +146,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     assert_ne!(replacement["hash"].as_str().unwrap(), original_block);
     assert_eq!(catch_up(&node, &mut database).await, (1, 1));
     assert_eq!(
-        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
         1
     );
     let payment_rows: i64 = reader
@@ -243,7 +177,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     run_cli(&["generatetoaddress", "3", &mining_address]);
     assert_eq!(catch_up(&node, &mut database).await, (3, 0));
     assert_eq!(
-        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
         0
     );
     let payment_rows: i64 = reader
@@ -261,11 +195,11 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     let (_, removed) = catch_up(&node, &mut database).await;
     assert!(removed > 50);
     assert_eq!(database.tip().unwrap().unwrap().height, 49);
-    utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
+    assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
     run_cli(&["reconsiderblock", &ancestor]);
     catch_up(&node, &mut database).await;
 
-    utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
+    assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
 
     let mut rebuilt =
         IndexDatabase::open(&directory.path().join("rebuilt.sqlite"), "regtest", genesis).unwrap();
@@ -310,4 +244,144 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         assert!(stdout.contains("Caught up at"));
         assert_eq!(stdout.contains("Indexed 0 "), first_run);
     }
+}
+
+#[derive(Deserialize)]
+struct ScanResult {
+    success: bool,
+    height: u64,
+    bestblock: String,
+    unspents: Vec<ScanOutput>,
+    total_amount: Number,
+}
+
+#[derive(Deserialize)]
+struct ScanOutput {
+    txid: String,
+    vout: u32,
+    amount: Number,
+    #[serde(rename = "scriptPubKey")]
+    script: String,
+    height: u64,
+    confirmations: u64,
+    coinbase: bool,
+}
+
+/// Compare every UTXO field with the daemon, accounting for the deliberate
+/// exclusion of pending spends. Returns the number excluded from the raw scan.
+async fn assert_matches_scan(
+    node: &NodeClient,
+    database: &mut IndexDatabase,
+    path: &Path,
+    addresses: &[String],
+) -> usize {
+    refresh_mempool(node, database, &mut MempoolCache::new())
+        .await
+        .unwrap();
+    let before = node.fetch_mempool_ids().await.unwrap();
+    let mut pending_spends = BTreeSet::new();
+    for id in &before.txids {
+        let transaction = cli_json(&["getrawtransaction", id, "true"]);
+        for input in transaction["vin"].as_array().unwrap() {
+            pending_spends.insert((
+                input["txid"].as_str().unwrap().to_owned(),
+                u32::try_from(input["vout"].as_u64().unwrap()).unwrap(),
+            ));
+        }
+    }
+    let mut descriptors = Vec::new();
+    for address in addresses {
+        descriptors.push(format!("addr({address})"));
+    }
+    // Historical scans belong only in this isolated test, never the API path.
+    let result = run_cli(&["scantxoutset", "start", &json!(descriptors).to_string()]);
+    let scan: ScanResult = serde_json::from_str(&result).unwrap();
+    assert!(scan.success, "daemon UTXO scan did not complete");
+    assert_eq!(
+        node.fetch_mempool_ids().await.unwrap(),
+        before,
+        "mempool changed during comparison"
+    );
+    let tip = node.fetch_tip().await.unwrap();
+    assert_eq!(tip.blocks as u64, scan.height);
+    assert_eq!(tip.bestblockhash, scan.bestblock);
+
+    let scripts = decode_addresses(addresses, "regtest").unwrap();
+    let mut reader = IndexReader::open(path, "regtest").unwrap();
+    let snapshot = reader.read_snapshot(&scripts).unwrap();
+    assert_eq!(snapshot.status.indexed_height, Some(scan.height));
+    assert_eq!(
+        snapshot.status.indexed_hash.as_deref(),
+        Some(scan.bestblock.as_str())
+    );
+    let mut expected = BTreeMap::new();
+    let mut scan_total = 0_u64;
+    let mut excluded = 0;
+    for output in scan.unspents {
+        let amount = scan_atomic_units(&output.amount);
+        scan_total = scan_total.checked_add(amount).unwrap();
+        let outpoint = (output.txid.to_ascii_lowercase(), output.vout);
+        // scantxoutset ignores the mempool. Obtain pending inputs independently
+        // from the daemon instead of using the indexer's own spend records.
+        if pending_spends.contains(&outpoint) {
+            excluded += 1;
+            continue;
+        }
+        let utxo = WalletUtxo {
+            transaction_id: outpoint.0.clone(),
+            output_index: output.vout,
+            amount,
+            script_pubkey: output.script.to_ascii_lowercase(),
+            block_height: output.height,
+            confirmations: output.confirmations,
+            coinbase: output.coinbase,
+        };
+        assert!(
+            expected.insert(outpoint, utxo).is_none(),
+            "duplicate scan outpoint"
+        );
+    }
+    assert_eq!(scan_total, scan_atomic_units(&scan.total_amount));
+    let mut actual = BTreeMap::new();
+    for output in snapshot.query_utxos().unwrap() {
+        let outpoint = (output.transaction_id.clone(), output.output_index);
+        assert!(
+            actual.insert(outpoint, output).is_none(),
+            "duplicate indexed outpoint"
+        );
+    }
+    assert_eq!(
+        actual, expected,
+        "indexed UTXOs differ from scantxoutset at height {}",
+        scan.height
+    );
+    println!(
+        "scantxoutset matches {} indexed UTXOs at height {} ({excluded} pending spends excluded)",
+        actual.len(),
+        scan.height
+    );
+    excluded
+}
+
+fn scan_atomic_units(number: &Number) -> u64 {
+    // Core's ValueFromAmount emits fixed decimal amounts. Keep this conversion
+    // independent of the production decoder so a shared bug cannot hide a mismatch.
+    let text = number.to_string();
+    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    assert!(fraction.len() <= 8, "scan returned sub-atomic precision");
+    let whole = whole
+        .parse::<u64>()
+        .unwrap()
+        .checked_mul(100_000_000)
+        .unwrap();
+    let fraction = if fraction.is_empty() {
+        0
+    } else {
+        fraction
+            .parse::<u64>()
+            .unwrap()
+            .checked_mul(10_u64.pow(8 - fraction.len() as u32))
+            .unwrap()
+    };
+    whole.checked_add(fraction).unwrap()
 }
