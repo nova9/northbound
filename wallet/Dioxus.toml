@@ -3,5 +3,5 @@ name = "Northbound"
 
 [bundle]
 publisher = "Northbound"
-identifier = "com.northbound.app"
+identifier = "io.github.nova9.northbound"
 icon = ["icons/icon.icns"]

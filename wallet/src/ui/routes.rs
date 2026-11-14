@@ -7,6 +7,10 @@ use crate::ui::pages::{
 };
 
 #[derive(Clone, Routable, PartialEq)]
+#[allow(
+    unreachable_code,
+    reason = "Routable generates unreachable error handling for the infallible String route parameter"
+)]
 #[rustfmt::skip]
 pub(crate) enum Route {
     #[layout(AppLayout)]

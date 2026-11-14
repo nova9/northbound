@@ -42,6 +42,12 @@ jobs:
       - name: Build mainnet wallet
         run: ./scripts/build-wallet.sh
 
+      - name: Ad-hoc sign and verify macOS app
+        run: |
+          app_path=target/dx/Northbound/bundle/macos/macos/Northbound.app
+          codesign --force --sign - "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
       - name: Archive macOS app
         run: |
           mkdir -p dist

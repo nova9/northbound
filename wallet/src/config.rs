@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ compile_error!("select a wallet network feature: regtest or mainnet");
 pub const WALLET_NAME: &str = "Northbound";
 
 #[cfg(not(debug_assertions))]
-pub const APPLICATION_IDENTIFIER: &str = "com.northbound.app";
+pub const APPLICATION_IDENTIFIER: &str = "io.github.nova9.northbound";
 
 pub const WALLET_DESCRIPTION: &str = "A self-custodial wallet for TrueNorth";
 pub const CURRENCY_TICKER: &str = "NORTH";
@@ -183,7 +183,7 @@ fn write_settings_file(settings: &WalletSettings) -> Result<(), String> {
 
 #[cfg(debug_assertions)]
 fn settings_path() -> Result<PathBuf, String> {
-    Ok(Path::new(".local").join("settings.json"))
+    Ok(PathBuf::from(".local").join("settings.json"))
 }
 
 #[cfg(not(debug_assertions))]
