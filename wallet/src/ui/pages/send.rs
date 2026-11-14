@@ -2,7 +2,7 @@ use bitcoin::consensus::encode;
 use dioxus::prelude::*;
 
 use crate::config::{CURRENCY_TICKER, WALLET_NETWORK};
-use crate::local_wallet::{VerifiedUtxo, calculate_spendable_balance};
+use crate::local_wallet::{UnlockedWallet, VerifiedUtxo, calculate_spendable_balance};
 use crate::p2qrh;
 use crate::transaction_plan::{TransactionPlan, create_transaction_plan};
 use crate::ui::state::AppContext;
@@ -11,17 +11,14 @@ use crate::unsigned_transaction::build_unsigned_transaction;
 const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
 
 #[derive(Clone)]
-enum NodeValidationState {
-    NotRequested,
-    Checking,
-    Accepted(SignedTransaction),
-    Rejected(String),
-    Broadcasting,
-    Broadcast(String),
-    BroadcastUncertain(String),
+enum SendState {
+    Ready,
+    Failed(String),
+    Sending,
+    Sent(String),
+    Uncertain(String),
 }
 
-#[derive(Clone)]
 struct SignedTransaction {
     transaction_hex: String,
     transaction_id: String,
@@ -29,12 +26,12 @@ struct SignedTransaction {
 
 #[component]
 pub(crate) fn Send() -> Element {
-    let context = use_context::<AppContext>();
+    let mut context = use_context::<AppContext>();
     let mut recipient = use_signal(String::new);
     let mut amount = use_signal(String::new);
     let mut validation_error = use_signal(|| None::<String>);
     let mut transaction_plan = use_signal(|| None::<TransactionPlan>);
-    let mut node_validation = use_signal(|| NodeValidationState::NotRequested);
+    let mut send_state = use_signal(|| SendState::Ready);
 
     let addresses = {
         let wallet = context.unlocked_wallet.read();
@@ -78,6 +75,11 @@ pub(crate) fn Send() -> Element {
         .and_then(|estimate| estimate.as_ref().ok())
         .map(|estimate| estimate.atomic_units_per_kvbyte);
 
+    let send_locked = matches!(
+        send_state(),
+        SendState::Sending | SendState::Sent(_) | SendState::Uncertain(_)
+    );
+
     let entered_amount = parse_north(&amount()).ok();
     let reviewed_plan = transaction_plan();
     let reviewed_fee = reviewed_plan.as_ref().map(|plan| plan.fee);
@@ -113,6 +115,9 @@ pub(crate) fn Send() -> Element {
                     class: "send-form",
                     onsubmit: move |event| {
                         event.prevent_default();
+                        if matches!(send_state(), SendState::Sending | SendState::Sent(_) | SendState::Uncertain(_)) {
+                            return;
+                        }
 
                         let result = prepare_transaction_plan(
                             &recipient(),
@@ -125,12 +130,12 @@ pub(crate) fn Send() -> Element {
                         match result {
                             Ok(plan) => {
                                 transaction_plan.set(Some(plan));
-                                node_validation.set(NodeValidationState::NotRequested);
+                                send_state.set(SendState::Ready);
                                 validation_error.set(None);
                             }
                             Err(message) => {
                                 transaction_plan.set(None);
-                                node_validation.set(NodeValidationState::NotRequested);
+                                send_state.set(SendState::Ready);
                                 validation_error.set(Some(message));
                             }
                         }
@@ -142,11 +147,12 @@ pub(crate) fn Send() -> Element {
                             value: "{recipient}",
                             placeholder: "Paste a {CURRENCY_TICKER} address",
                             autocomplete: "off",
+                            disabled: send_locked,
                             spellcheck: "false",
                             oninput: move |event| {
                                 recipient.set(event.value());
                                 transaction_plan.set(None);
-                                node_validation.set(NodeValidationState::NotRequested);
+                                send_state.set(SendState::Ready);
                             },
                         }
                         small { "Check the complete address before continuing." }
@@ -161,10 +167,11 @@ pub(crate) fn Send() -> Element {
                                 value: "{amount}",
                                 placeholder: "0.00000000",
                                 autocomplete: "off",
+                                disabled: send_locked,
                                 oninput: move |event| {
                                     amount.set(event.value());
                                     transaction_plan.set(None);
-                                    node_validation.set(NodeValidationState::NotRequested);
+                                    send_state.set(SendState::Ready);
                                 },
                             }
                             span { "{CURRENCY_TICKER}" }
@@ -214,7 +221,7 @@ pub(crate) fn Send() -> Element {
                     button {
                         class: "button primary",
                         r#type: "submit",
-                        disabled: available_balance.is_none() || atomic_units_per_kvbyte.is_none(),
+                        disabled: send_locked || available_balance.is_none() || atomic_units_per_kvbyte.is_none(),
                         "Review transaction"
                     }
                 }
@@ -252,130 +259,75 @@ pub(crate) fn Send() -> Element {
                             if let Some(message) = fee_warning.as_deref() {
                                 p { class: "error-message", role: "alert", "{message}" }
                             }
-                            if matches!(node_validation(), NodeValidationState::NotRequested) {
-                                p { "Review the amount and recipient before signing." }
+                            if matches!(send_state(), SendState::Ready) {
+                                p { "Check the recipient, amount, and fee. Sign and send will authorize and submit this payment." }
                             }
 
-                            match node_validation() {
-                                NodeValidationState::NotRequested => rsx! {
+                            match send_state() {
+                                SendState::Ready => rsx! {
                                     button {
-                                        class: "button secondary",
+                                        class: "button primary",
                                         r#type: "button",
                                         onclick: move |_| {
-                                            let result = build_and_sign_transaction(
-                                                &context,
-                                                &plan,
-                                                &recipient(),
-                                            );
-
-                                            match result {
-                                                Ok(signed_transaction) => {
-                                                    node_validation.set(NodeValidationState::Checking);
-                                                    let transaction_to_validate = signed_transaction.transaction_hex.clone();
-
-                                                    spawn(async move {
-                                                        let result = crate::api::validate_signed_transaction(transaction_to_validate).await;
-
-                                                        match result {
-                                                            Ok(result) if result.allowed => {
-                                                                node_validation.set(NodeValidationState::Accepted(signed_transaction));
-                                                            }
-                                                            Ok(result) => {
-                                                                let reason = result.rejection_reason.unwrap_or_else(|| {
-                                                                    "The node rejected the transaction without a reason.".to_owned()
-                                                                });
-                                                                node_validation.set(NodeValidationState::Rejected(reason));
-                                                            }
-                                                            Err(message) => {
-                                                                node_validation.set(NodeValidationState::Rejected(message));
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                                Err(message) => {
-                                                    node_validation.set(NodeValidationState::Rejected(message));
-                                                }
+                                            if !matches!(send_state(), SendState::Ready) {
+                                                return;
                                             }
-                                        },
-                                        "Validate signed transaction"
-                                    }
-                                },
-                                NodeValidationState::Checking => rsx! {
-                                    button { class: "button secondary", r#type: "button", disabled: true,
-                                        "Checking with node…"
-                                    }
-                                },
-                                NodeValidationState::Accepted(signed_transaction) => rsx! {
-                                    div { role: "status",
-                                        p { class: "success-message",
-                                            "Accepted by the node and ready for broadcast. It has not been sent."
-                                        }
-                                        p { "Broadcasting will send {format_north(plan.recipient_amount)} {CURRENCY_TICKER} to the recipient." }
-                                        button {
-                                            class: "button primary",
-                                            r#type: "button",
-                                            onclick: move |_| {
-                                                match reserve_planned_change_address(context, &plan) {
-                                                    Ok(()) => {
-                                                        node_validation.set(NodeValidationState::Broadcasting);
-                                                        let transaction_to_broadcast = signed_transaction.transaction_hex.clone();
-                                                        let expected_transaction_id = signed_transaction.transaction_id.clone();
+                                            send_state.set(SendState::Sending);
+                                            let result = {
+                                                let mut wallet = context.unlocked_wallet.write();
+                                                match wallet.as_mut() {
+                                                    Some(wallet) => build_sign_and_persist_transaction(wallet, &plan, &recipient()),
+                                                    None => Err("Unlock the wallet again to send the transaction.".to_owned()),
+                                                }
+                                            };
 
-                                                        spawn(async move {
-                                                            match crate::api::broadcast_signed_transaction(transaction_to_broadcast).await {
-                                                                Ok(transaction_id) => {
-                                                                    node_validation.set(NodeValidationState::Broadcast(transaction_id));
-                                                                }
-                                                                Err(broadcast_error) => {
-                                                                    let status = crate::api::fetch_transaction_status(
-                                                                        expected_transaction_id.clone(),
-                                                                    ).await;
-
-                                                                    match status {
-                                                                        Ok(true) => node_validation.set(
-                                                                            NodeValidationState::Broadcast(expected_transaction_id),
-                                                                        ),
-                                                                        Ok(false) => node_validation.set(
-                                                                            NodeValidationState::BroadcastUncertain(broadcast_error),
-                                                                        ),
-                                                                        Err(status_error) => node_validation.set(
-                                                                            NodeValidationState::BroadcastUncertain(format!(
-                                                                                "{broadcast_error} Status check also failed: {status_error}"
-                                                                            )),
-                                                                        ),
-                                                                    }
-                                                                }
-                                                            }
-                                                        });
-                                                    }
-                                                    Err(message) => {
-                                                        node_validation.set(NodeValidationState::Rejected(message));
+                                            let signed_transaction = match result {
+                                                Ok(transaction) => transaction,
+                                                Err(message) => {
+                                                    send_state.set(SendState::Failed(message));
+                                                    return;
+                                                }
+                                            };
+                                            spawn(async move {
+                                                let expected_transaction_id = signed_transaction.transaction_id;
+                                                match crate::api::broadcast_signed_transaction(signed_transaction.transaction_hex).await {
+                                                    Ok(transaction_id) => send_state.set(SendState::Sent(transaction_id)),
+                                                    Err(broadcast_error) => {
+                                                        match crate::api::fetch_transaction_status(expected_transaction_id.clone()).await {
+                                                            Ok(true) => send_state.set(SendState::Sent(expected_transaction_id)),
+                                                            Ok(false) => send_state.set(SendState::Uncertain(broadcast_error)),
+                                                            Err(status_error) => send_state.set(SendState::Uncertain(format!(
+                                                                "{broadcast_error} Status check also failed: {status_error}"
+                                                            ))),
+                                                        }
                                                     }
                                                 }
-                                            },
-                                            "Broadcast transaction"
+                                            });
+                                        },
+                                        "Sign and send"
+                                    }
+                                },
+                                SendState::Failed(message) => rsx! {
+                                    p { class: "error-message", role: "alert",
+                                        "Could not prepare the transaction: {message} Review the transaction again before sending."
+                                    }
+                                },
+                                SendState::Sending => rsx! {
+                                    div { role: "status",
+                                        button { class: "button primary", r#type: "button", disabled: true,
+                                            "Sending…"
                                         }
                                     }
                                 },
-                                NodeValidationState::Rejected(message) => rsx! {
-                                    p { class: "error-message", role: "alert",
-                                        "Node rejected the transaction: {message}"
-                                    }
-                                },
-                                NodeValidationState::Broadcasting => rsx! {
-                                    button { class: "button primary", r#type: "button", disabled: true,
-                                        "Broadcasting…"
-                                    }
-                                },
-                                NodeValidationState::Broadcast(transaction_id) => rsx! {
+                                SendState::Sent(transaction_id) => rsx! {
                                     div { role: "status",
                                         p { class: "success-message", "Transaction sent." }
                                         p { class: "transaction-id", "Transaction ID: {transaction_id}" }
                                     }
                                 },
-                                NodeValidationState::BroadcastUncertain(message) => rsx! {
+                                SendState::Uncertain(message) => rsx! {
                                     p { class: "error-message", role: "alert",
-                                        "The broadcast result is uncertain: {message} Check History before trying anything else."
+                                        "The send result is uncertain: {message} Check History before trying anything else."
                                     }
                                 },
                             }
@@ -389,50 +341,31 @@ pub(crate) fn Send() -> Element {
     }
 }
 
-fn build_and_sign_transaction(
-    context: &AppContext,
+fn build_sign_and_persist_transaction(
+    wallet: &mut UnlockedWallet,
     plan: &TransactionPlan,
     recipient: &str,
 ) -> Result<SignedTransaction, String> {
     let mut transaction = build_unsigned_transaction(plan, recipient)?;
-    let wallet = context.unlocked_wallet.read();
-    let wallet = wallet
-        .as_ref()
-        .ok_or_else(|| "Unlock the wallet again to sign the transaction.".to_owned())?;
+    if plan.change > 0 {
+        let next_change_address = wallet.next_change_address()?;
+        if plan.change_address.as_deref() != Some(next_change_address.as_str()) {
+            return Err(
+                "The wallet change address changed. Review the transaction again.".to_owned(),
+            );
+        }
+    }
 
     wallet.sign_p2qrh_transaction(&mut transaction, &plan.inputs)?;
+    // Persist change before returning any signed bytes that could be broadcast.
+    if plan.change > 0 {
+        wallet.reserve_and_persist_next_change_address()?;
+    }
 
     Ok(SignedTransaction {
         transaction_id: transaction.compute_txid().to_string(),
         transaction_hex: encode::serialize_hex(&transaction),
     })
-}
-
-fn reserve_planned_change_address(
-    mut context: AppContext,
-    plan: &TransactionPlan,
-) -> Result<(), String> {
-    if plan.change == 0 {
-        return Ok(());
-    }
-
-    let planned_change_address = plan
-        .change_address
-        .as_deref()
-        .ok_or_else(|| "The transaction plan is missing its change address.".to_owned())?;
-    let mut wallet = context.unlocked_wallet.write();
-    let wallet = wallet
-        .as_mut()
-        .ok_or_else(|| "Unlock the wallet again before broadcasting.".to_owned())?;
-    let next_change_address = wallet.next_change_address()?;
-
-    if next_change_address != planned_change_address {
-        return Err("The wallet change address changed. Review the transaction again.".to_owned());
-    }
-
-    wallet.reserve_and_persist_next_change_address()?;
-
-    Ok(())
 }
 
 fn prepare_transaction_plan(
@@ -526,6 +459,88 @@ fn fee_is_large_share_of_payment(fee: u64, payment_amount: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{fee_is_large_share_of_payment, parse_north};
+
+    fn wallet_and_plan(
+        path: &std::path::Path,
+    ) -> (super::UnlockedWallet, super::TransactionPlan, String) {
+        let pending = crate::keys::generate_new_wallet().unwrap();
+        let mut wallet = crate::local_wallet::save_new_wallet_and_unlock(
+            path,
+            &pending,
+            pending.recovery_phrase(),
+            "test password",
+            "test password",
+        )
+        .unwrap();
+        let recipient = wallet
+            .allocate_and_persist_next_receiving_address()
+            .unwrap();
+        let script =
+            crate::p2qrh::script_pubkey_from_address(&recipient, crate::config::WALLET_NETWORK)
+                .unwrap();
+        let utxos = wallet
+            .verify_utxos(vec![shared::WalletUtxo {
+                transaction_id: "ab".repeat(32),
+                output_index: 0,
+                amount: 100_000,
+                script_pubkey: bitcoin::hex::DisplayHex::as_hex(script.as_slice()).to_string(),
+                block_height: 1,
+                confirmations: 1,
+                coinbase: false,
+            }])
+            .unwrap();
+        let change_address = wallet.next_change_address().unwrap();
+        let plan = super::create_transaction_plan(utxos, 50_000, 1_001, change_address).unwrap();
+        (wallet, plan, recipient)
+    }
+
+    #[test]
+    fn signed_transaction_change_is_tracked_after_reopening_without_a_broadcast() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallet.json");
+        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
+        let change = plan.change_address.as_ref().unwrap();
+        assert!(!wallet.tracked_addresses().unwrap().contains(change));
+
+        let signed =
+            super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient).unwrap();
+        assert!(!signed.transaction_hex.is_empty());
+        drop(wallet);
+        let reopened = crate::local_wallet::load_and_unlock_wallet(&path, "test password").unwrap();
+        assert!(reopened.tracked_addresses().unwrap().contains(change));
+        assert_ne!(reopened.next_change_address().unwrap(), *change);
+    }
+
+    #[test]
+    fn failed_change_save_does_not_return_a_signed_transaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallet.json");
+        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
+        // A directory at the wallet path forces the atomic replacement to fail.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient).is_err());
+        assert_eq!(
+            wallet.next_change_address().unwrap(),
+            *plan.change_address.as_ref().unwrap()
+        );
+    }
+
+    #[test]
+    fn changed_change_address_requires_a_new_review() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallet.json");
+        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
+        wallet.reserve_and_persist_next_change_address().unwrap();
+
+        let error = match super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient)
+        {
+            Ok(_) => panic!("stale plan must not be signed"),
+            Err(message) => message,
+        };
+        assert!(error.contains("Review the transaction again"));
+    }
 
     #[test]
     fn north_amount_is_parsed_without_floating_point() {

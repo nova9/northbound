@@ -32,6 +32,10 @@ server receives public addresses and signed transactions only.
 - Request bodies, address batches, and signed transaction sizes are bounded.
 - Inputs from the server are treated as untrusted. The wallet verifies UTXO
   ownership and transaction details before signing.
+- After review, "Sign and send" signs locally, saves the change address, and
+  submits the signed transaction for broadcast. A failure to save prevents
+  submission. Once the signed transaction leaves the wallet, the server can
+  relay it even if the request times out; check History before retrying.
 - The server checks that its configured network matches the connected node.
 - The node RPC cookie is read locally and is never returned by the API.
 

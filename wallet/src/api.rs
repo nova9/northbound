@@ -7,8 +7,7 @@ use std::time::Duration;
 use shared::{
     AddressActivityRequest, AddressActivityResponse, ApiErrorResponse,
     BroadcastTransactionResponse, ChainTip, FeeEstimateV2, IndexStatus, SignedTransactionRequest,
-    TransactionStatusRequest, TransactionStatusResponse, TransactionValidation, UtxoRequest,
-    UtxoResponse, WalletUtxo,
+    TransactionStatusRequest, TransactionStatusResponse, UtxoRequest, UtxoResponse, WalletUtxo,
 };
 
 const WALLET_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -103,27 +102,6 @@ pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, Stri
     Ok(response.utxos)
 }
 
-pub async fn validate_signed_transaction(
-    transaction_hex: String,
-) -> Result<TransactionValidation, String> {
-    let request = SignedTransactionRequest { transaction_hex };
-    let response = http_client()?
-        .post(endpoint("/v1/transactions/validate")?)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|error| format!("could not contact wallet server: {error}"))?;
-
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("wallet server could not validate the transaction: {error}"))?;
-
-    response
-        .json::<TransactionValidation>()
-        .await
-        .map_err(|error| format!("wallet server returned an invalid validation result: {error}"))
-}
-
 pub async fn broadcast_signed_transaction(transaction_hex: String) -> Result<String, String> {
     let request = SignedTransactionRequest { transaction_hex };
     let response = http_client()?
@@ -133,9 +111,7 @@ pub async fn broadcast_signed_transaction(transaction_hex: String) -> Result<Str
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
 
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("wallet server could not broadcast the transaction: {error}"))?;
+    let response = require_success(response, "Could not send the transaction").await?;
 
     let result = response
         .json::<BroadcastTransactionResponse>()
