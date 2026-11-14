@@ -52,8 +52,7 @@ Install a Rust toolchain, then download a TrueNorth release and start a local
 regtest node:
 
 ```bash
-./scripts/download-truenorth.sh \
-  https://github.com/truenorth-project/truenorth/releases/download/v30.5.2/truenorth-v30.5.2-macos-arm64.tar.gz
+./scripts/download-truenorth.sh
 ./scripts/regtest-start.sh
 ```
 
@@ -76,8 +75,10 @@ Run the P2QRH checks against an isolated TrueNorth Core regtest node:
 ./scripts/test-truenorth-integration.sh
 ```
 
-The script downloads and checksums the version pinned in
-`wallet/tests/truenorth/VERSION.txt`, then removes its temporary chain on exit.
+Development downloads and integration tests use the Core release pinned in
+[`TRUENORTH_VERSION`](TRUENORTH_VERSION). The integration script checksums its
+download and removes its temporary chain on exit. Deployment versions under
+`server/devops/` are managed independently.
 See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
 with Core's consensus tests.
 

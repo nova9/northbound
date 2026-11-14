@@ -5,7 +5,8 @@ the code in `wallet/src/p2qrh.rs` and `wallet/src/transaction_signing.rs`.
 `cargo test --workspace` also runs these tests without starting a node.
 
 Run `./scripts/test-truenorth-integration.sh` for the two ignored tests in
-`truenorth_regtest.rs`, against the Core release in `VERSION.txt`. The script
+`truenorth_regtest.rs`, against the Core release in the repository's
+[`TRUENORTH_VERSION`](../../../TRUENORTH_VERSION). The script
 runs them sequentially because they share a node and funding wallet. One test
 funds, spends, and confirms a payment. The other independently funds a spend,
 checks its descriptor-derived address, and tests mutated witnesses.

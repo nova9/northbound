@@ -5,8 +5,8 @@ set -eu
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_directory=$(dirname "$script_directory")
 
-# Keep the node version separate from wallet runtime configuration.
-version_file="$repository_directory/wallet/tests/truenorth/VERSION.txt"
+# Development and integration tests use the same Core release.
+version_file="$repository_directory/TRUENORTH_VERSION"
 
 if [ ! -f "$version_file" ]; then
     echo "Missing TrueNorth version file: $version_file" >&2
