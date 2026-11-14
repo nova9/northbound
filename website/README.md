@@ -6,12 +6,17 @@ uses a small Python preparation step to fill in release metadata.
 
 ## Downloads and deployment
 
-The macOS release workflow deploys this directory to GitHub Pages after a
-published release or prerelease builds successfully and its assets are uploaded.
-The page labels prereleases explicitly. Manual packaging runs do not deploy the
-public website. Rerunning an older release also skips deployment when it is no
-longer the most recently published release, comparing publication dates across
-both stable releases and prereleases.
+The independent **Deploy website** workflow publishes this directory to GitHub
+Pages. It runs when website files change on `main`, when a release build finishes
+successfully, or manually from **Actions → Deploy website → Run workflow**.
+It never builds the wallet. The macOS workflow only builds and uploads packages.
+
+Each deployment uses website source from `main` and the most recently published
+release or prerelease that already has its macOS ZIP and checksum attached.
+A newer release still being built does not hide the previous working download.
+The page labels prereleases explicitly. Rerunning an older release cannot roll
+the website back because selection always uses publication dates and available
+assets. Manual wallet packaging runs do not trigger a website deployment.
 
 `scripts/build-website.py` reads the published release metadata and fills in the
 version, macOS ZIP download URL, and release-notes URL. It requires both
@@ -24,9 +29,10 @@ One-time repository setup:
 
 1. Open **Settings → Pages → Build and deployment** and select **GitHub Actions**
    as the source.
-2. If the `github-pages` environment restricts deployment branches, allow the
-   release tags as well; this workflow deploys from the tagged source.
-3. Publish a release or prerelease containing this workflow and `website/`.
+2. If the `github-pages` environment restricts deployment branches, allow `main`;
+   website deployment runs from the default branch.
+3. Run **Deploy website** once there is a published release or prerelease with
+   its download assets. This can reuse an existing release without a rebuild.
 
 The website's custom domain is `northboundwallet.org`, configured in repository
 Pages settings. In Cloudflare, use DNS-only `A` records at `@` pointing to

@@ -1,0 +1,74 @@
+name: Deploy website
+
+on:
+  workflow_run:
+    workflows: [macOS release build]
+    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - scripts/build-website.py
+      - .github/workflows/website.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy website
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out website source
+        uses: actions/checkout@v4
+        with:
+          # Website fixes must not require moving or rebuilding a release tag.
+          ref: main
+
+      - name: Prepare website from the latest available release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp > "$RUNNER_TEMP/releases.json"
+          jq -e '
+            add
+            | map(select(.draft == false))
+            | sort_by(.published_at)
+            | reverse
+            | map(select(
+                .tag_name as $tag
+                | "Northbound-\($tag)-macos-arm64.zip" as $archive
+                | any(.assets[]; .name == $archive)
+                  and any(.assets[]; .name == ($archive + ".sha256"))
+              ))
+            | first
+          ' "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/release.json"
+          python3 scripts/build-website.py "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/website"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/website
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
