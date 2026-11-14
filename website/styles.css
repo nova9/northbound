@@ -37,6 +37,7 @@ nav .nav-download { gap: 16px; color: var(--blue); }
 .hero { padding-block: 94px 72px; }
 .hero-bottom { display: flex; align-items: end; justify-content: space-between; gap: 48px; margin-top: 44px; }
 .hero-bottom p { font-size: 1.15rem; color: var(--muted); }
+.hero-screenshot { display: block; width: 100%; height: auto; margin-top: 48px; }
 .button { display: inline-flex; justify-content: space-between; align-items: center; gap: 32px; min-height: 54px; padding: 16px 22px; border-radius: 6px; background: var(--blue); color: white; font-weight: 600; text-decoration: none; flex-shrink: 0; }
 .button:hover { color: white; background: var(--blue-hover); }
 .ownership { padding-block: 72px; background: #243b59; color: white; }
@@ -52,8 +53,6 @@ nav .nav-download { gap: 16px; color: var(--blue); }
 .release-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding-bottom: 30px; border-bottom: 1px solid var(--line); }
 .release-heading > p { color: var(--muted); font-variant-numeric: tabular-nums; }
 .release-body { display: grid; grid-template-columns: 1.25fr 1fr; gap: 100px; margin-top: 32px; }
-.download-content p { color: var(--muted); max-width: 50ch; }
-.download-content > a { display: inline-block; margin-top: 22px; padding-block: 8px; }
 .release-note p { font-size: .94rem; color: var(--muted); margin-top: 12px; }
 .download-list { list-style: none; padding: 0; margin: 0 0 20px; }
 .download-list li { border-bottom: 1px solid var(--line); }
@@ -86,6 +85,7 @@ nav .nav-download { gap: 16px; color: var(--blue); }
   .hero { padding-block: 54px; }
   .hero-bottom { margin-top: 28px; }
   .hero-bottom p { font-size: 1rem; }
+  .hero-screenshot { margin-top: 32px; }
   .desktop-break { display: none; }
   .ownership { padding-block: 48px; }
   .ownership-layout, .release-body, .open-source { grid-template-columns: 1fr; gap: 36px; }

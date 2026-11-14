@@ -19,7 +19,7 @@ the website back because selection always uses publication dates and available
 assets. Manual wallet packaging runs do not trigger a website deployment.
 
 `scripts/build-website.py` reads the published release metadata and fills in the
-version, macOS ZIP download URL, and release-notes URL. It requires both
+version and macOS ZIP download URL. It requires both
 `Northbound-<tag>-macos-arm64.zip` and its `.sha256` file before deployment, so a
 missing download fails the job instead of publishing a broken link. Generated
 files are uploaded as a Pages artifact; source HTML is not rewritten or committed.

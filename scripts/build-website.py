@@ -24,10 +24,8 @@ def build_website(release, output_directory):
     if not download_url or not checksum_available:
         raise ValueError("The release must include its macOS ZIP and SHA-256 checksum.")
 
-    release_url = release["html_url"]
-    for url in [download_url, release_url]:
-        if not url.startswith("https://github.com/"):
-            raise ValueError("Release links must use https://github.com/.")
+    if not download_url.startswith("https://github.com/"):
+        raise ValueError("Release links must use https://github.com/.")
 
     source_directory = Path(__file__).resolve().parent.parent / "website"
     page = (source_directory / "index.html").read_text()
@@ -36,8 +34,6 @@ def build_website(release, output_directory):
             f"{release_label} {html.escape(tag)}",
         'data-release-download href="https://github.com/nova9/northbound/releases"':
             f'data-release-download href="{html.escape(download_url, quote=True)}"',
-        'data-release-notes href="https://github.com/nova9/northbound/releases"':
-            f'data-release-notes href="{html.escape(release_url, quote=True)}"',
     }
     for marker, replacement in replacements.items():
         if page.count(marker) != 1:
