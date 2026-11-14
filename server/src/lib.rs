@@ -2,7 +2,9 @@ mod api;
 pub mod config;
 mod error;
 mod node_routes;
+mod rate_limit;
 
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -32,9 +34,9 @@ impl AppState {
     }
 }
 
-pub fn build_router(state: Arc<AppState>) -> Router {
+pub fn build_router(state: Arc<AppState>, requests_per_second: NonZeroU32) -> Router {
+    let rate_limit = Arc::new(rate_limit::RateLimit::new(requests_per_second));
     Router::new()
-        .route("/ready", get(api::readiness))
         .route("/v1/chain/tip", get(node_routes::chain_tip))
         .route("/v1/fees/estimate", get(node_routes::fee_estimate))
         .route("/v1/addresses/activity", post(api::address_activity))
@@ -53,6 +55,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/utxos", post(api::utxos))
         .layer(DefaultBodyLimit::max(1_000_000))
+        .layer(axum::middleware::from_fn_with_state(
+            rate_limit,
+            rate_limit::limit_request_rate,
+        ))
+        // Health probes must remain available when the API reaches its rate limit.
+        .route("/ready", get(api::readiness))
         .layer(axum::middleware::map_response(error::format_response))
         .with_state(state)
 }

@@ -4861,6 +4861,7 @@ dependencies = [
  "shared",
  "tempfile",
  "tokio",
+ "tower",
  "truenorth-rpc",
 ]
 

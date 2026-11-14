@@ -1,5 +1,6 @@
 use std::env;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 pub struct ServerConfig {
@@ -9,6 +10,7 @@ pub struct ServerConfig {
     pub network: String,
     pub index_database: PathBuf,
     pub index_poll_seconds: u64,
+    pub requests_per_second: NonZeroU32,
 }
 
 impl ServerConfig {
@@ -45,6 +47,13 @@ impl ServerConfig {
             );
         }
         Ok(Self {
+            requests_per_second: env::var("TRUENORTH_SERVER_REQUESTS_PER_SECOND")
+                .unwrap_or_else(|_| "100".into())
+                .parse::<NonZeroU32>()
+                .map_err(|_| {
+                    "TRUENORTH_SERVER_REQUESTS_PER_SECOND must be an integer between 1 and 4294967295"
+                        .to_owned()
+                })?,
             bind_address,
             rpc_url: env::var("TRUENORTH_RPC_URL").unwrap_or_else(|_| default_rpc_url.to_owned()),
             rpc_cookie_path: env::var("TRUENORTH_RPC_COOKIE_PATH")

@@ -148,6 +148,7 @@ in
       TRUENORTH_RPC_URL = "http://127.0.0.1:9554";
       TRUENORTH_RPC_COOKIE_PATH = "/var/lib/truenorth/.cookie";
       TRUENORTH_INDEX_DATABASE = "/var/lib/northbound/chain.sqlite";
+      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "100";
     };
 
     serviceConfig = {

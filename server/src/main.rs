@@ -44,13 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
     });
-    let server = axum::serve(listener, build_router(state)).with_graceful_shutdown(async move {
-        while !*server_stop.borrow() {
-            if server_stop.changed().await.is_err() {
-                break;
+    let server = axum::serve(listener, build_router(state, config.requests_per_second))
+        .with_graceful_shutdown(async move {
+            while !*server_stop.borrow() {
+                if server_stop.changed().await.is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
     println!(
         "Server listening on http://{}; /ready reports index readiness",
         config.bind_address

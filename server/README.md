@@ -43,6 +43,17 @@ unavailable index data returns 503, and node failures return 502. Internal datab
 details stay in server logs. Read-only SQLite requests run on blocking threads,
 with at most 16 concurrent queries and a 3-second SQLite busy timeout.
 
+The API accepts 100 requests per one-second window by default, shared across all
+clients and endpoints in one server process. Set
+`TRUENORTH_SERVER_REQUESTS_PER_SECOND` to a positive integer to change this limit.
+Excess requests return HTTP 429 with a JSON error and `Retry-After: 1`; clients
+should wait at least one second before retrying. Rejected requests are not queued
+or sent to the database or daemon. Invalid requests also consume the budget.
+`/ready` is exempt so health probes continue to work during heavy traffic.
+This is a fixed-window limit: bursts can occur on either side of a window
+boundary. It is independent of the 16 concurrent index query limit, and does not
+provide per-client fairness or a shared budget across server processes.
+
 Other settings remain `TRUENORTH_NETWORK` (`regtest` or `main`),
 `TRUENORTH_RPC_URL`, `TRUENORTH_RPC_COOKIE_PATH`, and `TRUENORTH_SERVER_BIND`.
 `TRUENORTH_INDEX_POLL_SECONDS` defaults to 2 and accepts 1–10 in server mode.
