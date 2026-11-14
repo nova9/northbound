@@ -165,6 +165,11 @@ in
 
   services.caddy = {
     enable = true;
+    virtualHosts."api.northboundwallet.org".extraConfig = ''
+      reverse_proxy 127.0.0.1:3000
+    '';
+
+    # Keep the IP endpoint available for existing wallet releases.
     # IP clients omit SNI; EC2 exposes a private address to Caddy locally.
     globalConfig = ''
       default_sni 13.55.12.147
