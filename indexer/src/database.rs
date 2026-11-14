@@ -6,6 +6,13 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{Block, Error, Hash, Result};
 
+#[cfg(test)]
+mod crash_tests;
+#[cfg(test)]
+mod migration_tests;
+#[cfg(test)]
+mod tests;
+
 pub(crate) const APPLICATION_ID: i64 = 0x4e425849;
 pub(crate) const SCHEMA_VERSION: i64 = 2;
 

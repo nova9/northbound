@@ -8,6 +8,9 @@ use crate::address::ScriptAddress;
 use crate::database::{APPLICATION_ID, SCHEMA_VERSION};
 use crate::{Error, Result};
 
+#[cfg(test)]
+mod tests;
+
 pub struct IndexReader {
     connection: Connection,
     network: String,

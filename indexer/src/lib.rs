@@ -10,6 +10,9 @@ mod store_block;
 mod sync;
 mod worker;
 
+#[cfg(test)]
+mod test_support;
+
 pub use address::{ScriptAddress, address_from_script, decode_addresses};
 pub use database::{ChainTip, IndexDatabase};
 pub use error::{Error, Result};

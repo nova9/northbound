@@ -1,3 +1,6 @@
+#[path = "truenorth/utxo_scan.rs"]
+mod utxo_scan;
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -112,8 +115,26 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         .unwrap();
     assert!(!genesis_eligible);
 
+    let unused_address = run_cli(&["getnewaddress"]);
+    assert_eq!(
+        utxo_scan::assert_matches_scan(
+            &node,
+            &mut database,
+            &path,
+            std::slice::from_ref(&unused_address)
+        )
+        .await,
+        0
+    );
+
     let mining_address = run_cli(&["getnewaddress"]);
     run_cli(&["generatetoaddress", "101", &mining_address]);
+    assert_eq!(catch_up(&node, &mut database).await, (101, 0));
+    let mining_addresses = vec![mining_address.clone(), unused_address.clone()];
+    assert_eq!(
+        utxo_scan::assert_matches_scan(&node, &mut database, &path, &mining_addresses).await,
+        0
+    );
     let receiving_address = run_cli(&["getnewaddress"]);
     let address_info = cli_json(&["validateaddress", &receiving_address]);
     let script = hex::decode(address_info["scriptPubKey"].as_str().unwrap()).unwrap();
@@ -127,7 +148,27 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     ]);
     let mined = cli_json(&["generatetoaddress", "1", &mining_address]);
     let original_block = mined[0].as_str().unwrap();
-    assert_eq!(catch_up(&node, &mut database).await, (102, 0));
+    assert_eq!(catch_up(&node, &mut database).await, (1, 0));
+    let decoded_payment = cli_json(&["getrawtransaction", &payment, "true", original_block]);
+    let mut change_address = None;
+    for output in decoded_payment["vout"].as_array().unwrap() {
+        if let Some(address) = output["scriptPubKey"]["address"].as_str()
+            && address != receiving_address
+        {
+            change_address = Some(address.to_owned());
+        }
+    }
+    let requested_addresses = vec![
+        mining_address.clone(),
+        receiving_address.clone(),
+        change_address.expect("payment should include change"),
+        unused_address,
+        receiving_address.clone(),
+    ];
+    assert_eq!(
+        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        0
+    );
 
     let payment_id = hex::decode(&payment).unwrap();
     let (vout, amount, saved_script): (u32, i64, Vec<u8>) = reader
@@ -160,12 +201,20 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     drop(database);
     database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
     assert_eq!(catch_up(&node, &mut database).await, (0, 0));
+    assert_eq!(
+        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        0
+    );
 
     // Replace height 102 with an explicitly empty block, leaving payment pending.
     run_cli(&["invalidateblock", original_block]);
     let replacement = cli_json(&["generateblock", &mining_address, "[]"]);
     assert_ne!(replacement["hash"].as_str().unwrap(), original_block);
     assert_eq!(catch_up(&node, &mut database).await, (1, 1));
+    assert_eq!(
+        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        1
+    );
     let payment_rows: i64 = reader
         .query_row(
             "SELECT count(*) FROM transactions WHERE txid = ?1",
@@ -193,6 +242,10 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     // Mining includes the pending payment on the replacement branch exactly once.
     run_cli(&["generatetoaddress", "3", &mining_address]);
     assert_eq!(catch_up(&node, &mut database).await, (3, 0));
+    assert_eq!(
+        utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
+        0
+    );
     let payment_rows: i64 = reader
         .query_row(
             "SELECT count(*) FROM transactions WHERE txid = ?1",
@@ -208,8 +261,11 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     let (_, removed) = catch_up(&node, &mut database).await;
     assert!(removed > 50);
     assert_eq!(database.tip().unwrap().unwrap().height, 49);
+    utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
     run_cli(&["reconsiderblock", &ancestor]);
     catch_up(&node, &mut database).await;
+
+    utxo_scan::assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
 
     let mut rebuilt =
         IndexDatabase::open(&directory.path().join("rebuilt.sqlite"), "regtest", genesis).unwrap();

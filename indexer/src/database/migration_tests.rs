@@ -1,4 +1,4 @@
-use indexer::{IndexDatabase, IndexReader};
+use crate::{IndexDatabase, IndexReader};
 use rusqlite::{Connection, params};
 
 #[test]
@@ -9,7 +9,7 @@ fn migrates_version_one_without_rescanning_or_losing_confirmed_rows() {
     let txid = [2_u8; 32];
     let connection = Connection::open(&path).unwrap();
     connection
-        .execute_batch(include_str!("../migrations/001_index.sql"))
+        .execute_batch(include_str!("../../migrations/001_index.sql"))
         .unwrap();
     connection
         .execute(

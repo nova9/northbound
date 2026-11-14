@@ -1,9 +1,7 @@
-mod support;
-
-use indexer::{Error, IndexReader, ScriptAddress, address_from_script, decode_addresses};
+use crate::test_support::{Fixture, block, hash, payment};
+use crate::{Error, IndexReader, ScriptAddress, address_from_script, decode_addresses};
 use rusqlite::Connection;
 use serde_json::json;
-use support::{Fixture, block, hash, payment};
 
 fn scripts() -> Vec<ScriptAddress> {
     vec![

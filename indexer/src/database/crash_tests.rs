@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use indexer::{IndexDatabase, decode_block};
+use crate::{IndexDatabase, decode_block};
 use rusqlite::{Connection, params};
 use serde_json::json;
 
@@ -15,7 +15,7 @@ fn abrupt_exit_before_and_after_commit_preserves_atomic_progress() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("chain.sqlite");
         let output = Command::new(env::current_exe().unwrap())
-            .args(["--exact", "crash_worker"])
+            .args(["--exact", "database::crash_tests::crash_worker"])
             .env("INDEXER_CRASH_TEST_PATH", &path)
             .env("INDEXER_CRASH_TEST_MODE", mode)
             .output()

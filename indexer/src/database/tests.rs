@@ -1,9 +1,7 @@
-mod support;
-
-use indexer::{IndexDatabase, decode_block, decode_hash};
+use crate::test_support::{Fixture, block, coinbase, hash, payment};
+use crate::{IndexDatabase, decode_block, decode_hash};
 use rusqlite::{Connection, params};
 use serde_json::json;
-use support::{Fixture, block, coinbase, hash, payment};
 
 #[test]
 fn preserves_genesis_scripts_and_hash_display_order() {

@@ -141,6 +141,7 @@ currently accept at most 100,000 transactions.
 cargo fmt -p indexer -- --check
 cargo check -p indexer
 cargo test -p indexer
+cargo test -p indexer --lib
 ./scripts/test-truenorth-integration.sh indexer
 ./scripts/test-truenorth-integration.sh server
 ```
@@ -149,10 +150,22 @@ The integration harness creates an isolated daemon and removes its temporary
 chain afterward. Invalidation and reconsideration only target that test node.
 The default harness invocation still runs wallet tests.
 
+SQLite-only checks are unit-test modules under `src/database/` and `src/queries/`,
+enabled with `#[cfg(test)]` in their implementation modules. They run with
+`cargo test -p indexer --lib` without a daemon. The daemon integration test remains
+in `tests/truenorth_regtest.rs` and runs through the isolated shell harness above.
+
 The regtest test verifies P2QRH scripts and amounts against `validateaddress`
 and `gettxout`, restart, same-height branch replacement, removal and subsequent
 reconfirmation of a payment, rollback of more than fifty blocks, node failure,
 wrong-network rejection, executable catch-up, and equality with a clean rebuild.
+It also compares the full indexed UTXO result with `scantxoutset` after mining,
+payment/change, restart, and reorganizations, including a deep rollback. The
+comparison covers outpoints, exact atomic amounts, scripts, block heights,
+confirmations, and coinbase flags across multiple scripts, a duplicate address,
+and an unused address. Scan amounts are parsed independently of the production
+decoder. When pending spends exist, their outpoints are obtained from the daemon
+and excluded from the scan to match the indexer's deliberate pending-spend filter.
 SQLite tests cover same-block parent/child spends, all-or-nothing failed writes,
 abrupt exits before and after commit, exclusive writer ownership, reader snapshot
 consistency, malformed data, duplicate IDs, and invalid spends.

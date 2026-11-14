@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use indexer::{Block, Hash, IndexDatabase, decode_block};
+use crate::{Block, Hash, IndexDatabase, decode_block};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use tempfile::TempDir;
