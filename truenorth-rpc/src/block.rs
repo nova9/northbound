@@ -8,39 +8,64 @@ pub type Hash = [u8; 32];
 
 #[derive(Debug)]
 pub struct Block {
-    pub(crate) hash: Hash,
-    pub(crate) height: i64,
-    pub(crate) previous_hash: Option<Hash>,
-    pub(crate) timestamp: i64,
-    pub(crate) transactions: Vec<Transaction>,
+    pub hash: Hash,
+    pub height: i64,
+    pub previous_hash: Option<Hash>,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
 }
 
-#[derive(Debug)]
-pub(crate) struct Transaction {
+impl Block {
+    pub fn validate(&self) -> Result<()> {
+        if self.height < 0
+            || self.timestamp < 0
+            || self.transactions.is_empty()
+            || (self.height == 0) != self.previous_hash.is_none()
+        {
+            return Err(Error::InvalidData("invalid block metadata".into()));
+        }
+        for (position, transaction) in self.transactions.iter().enumerate() {
+            if transaction.is_coinbase != (position == 0)
+                || transaction.outputs.is_empty()
+                || transaction.is_coinbase != transaction.inputs.is_empty()
+            {
+                return Err(Error::InvalidData(
+                    "invalid transaction position or input/output count".into(),
+                ));
+            }
+            let mut total = 0_i64;
+            for output in &transaction.outputs {
+                if output.amount < 0 {
+                    return Err(Error::InvalidData("negative output amount".into()));
+                }
+                total = total
+                    .checked_add(output.amount)
+                    .filter(|total| *total <= MAX_MONEY)
+                    .ok_or_else(|| Error::InvalidData("output total exceeds MAX_MONEY".into()))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Transaction {
     pub txid: Hash,
     pub is_coinbase: bool,
     pub inputs: Vec<Outpoint>,
     pub outputs: Vec<Output>,
 }
 
-#[derive(Debug)]
-pub(crate) struct Outpoint {
+#[derive(Clone, Debug)]
+pub struct Outpoint {
     pub txid: Hash,
     pub vout: u32,
 }
 
-#[derive(Debug)]
-pub(crate) struct Output {
+#[derive(Clone, Debug)]
+pub struct Output {
     pub amount: i64,
     pub script: Vec<u8>,
-}
-
-impl Output {
-    pub fn utxo_eligible(&self, block_height: i64) -> bool {
-        // Core skips all genesis outputs. IsUnspendable excludes OP_RETURN
-        // and scripts exceeding MAX_SCRIPT_SIZE, not unfamiliar script types.
-        block_height != 0 && self.script.first() != Some(&0x6a) && self.script.len() <= 10_000
-    }
 }
 
 #[derive(Deserialize)]
@@ -106,7 +131,7 @@ pub fn decode_block(json: &str) -> Result<Block> {
 
     let mut transactions = Vec::new();
     for (position, rpc_transaction) in rpc.tx.into_iter().enumerate() {
-        let transaction = decode_transaction(rpc_transaction)?;
+        let transaction = decode_rpc_transaction(rpc_transaction)?;
         if transaction.is_coinbase != (position == 0) {
             return Err(Error::InvalidData(
                 "only the first transaction must be coinbase".into(),
@@ -123,7 +148,13 @@ pub fn decode_block(json: &str) -> Result<Block> {
     })
 }
 
-fn decode_transaction(rpc: RpcTransaction) -> Result<Transaction> {
+pub fn decode_transaction(json: &str) -> Result<Transaction> {
+    let rpc = serde_json::from_str(json)
+        .map_err(|error| Error::InvalidData(format!("cannot decode transaction: {error}")))?;
+    decode_rpc_transaction(rpc)
+}
+
+fn decode_rpc_transaction(rpc: RpcTransaction) -> Result<Transaction> {
     if rpc.vin.is_empty() || rpc.vout.is_empty() {
         return Err(Error::InvalidData(
             "transaction must have inputs and outputs".into(),

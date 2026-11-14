@@ -14,6 +14,10 @@ pub struct FeeEstimate {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionHistoryRequest {
     pub addresses: Vec<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -32,6 +36,8 @@ pub struct WalletTransaction {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionHistory {
     pub transactions: Vec<WalletTransaction>,
+    pub next_cursor: Option<String>,
+    pub index: IndexStatus,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -42,6 +48,7 @@ pub struct AddressActivityRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AddressActivityResponse {
     pub used_addresses: Vec<String>,
+    pub index: IndexStatus,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -63,6 +70,25 @@ pub struct WalletUtxo {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UtxoResponse {
     pub utxos: Vec<WalletUtxo>,
+    pub index: IndexStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IndexStatus {
+    pub ready: bool,
+    pub indexed_height: Option<u64>,
+    pub indexed_hash: Option<String>,
+    pub observed_node_height: Option<u64>,
+    pub observed_node_hash: Option<String>,
+    pub last_node_contact: Option<u64>,
+    pub pending_available: bool,
+    pub pending_observed_at: Option<u64>,
+    pub max_age_seconds: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ApiErrorResponse {
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

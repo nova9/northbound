@@ -10,6 +10,18 @@ spec:
     requests:
       storage: 5Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: northbound-index-data
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -73,6 +85,8 @@ spec:
               value: http://127.0.0.1:9554
             - name: TRUENORTH_RPC_COOKIE_PATH
               value: /var/lib/truenorth/.cookie
+            - name: TRUENORTH_INDEX_DATABASE
+              value: /var/lib/northbound/chain.sqlite
           ports:
             - name: http
               containerPort: 3000
@@ -81,6 +95,14 @@ spec:
             - name: truenorth-data
               mountPath: /var/lib/truenorth
               readOnly: true
+            - name: index-data
+              mountPath: /var/lib/northbound
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: 100m
@@ -95,6 +117,9 @@ spec:
                 - ALL
 
       volumes:
+        - name: index-data
+          persistentVolumeClaim:
+            claimName: northbound-index-data
         - name: truenorth-data
           persistentVolumeClaim:
             claimName: truenorth-mainnet-data

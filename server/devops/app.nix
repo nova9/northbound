@@ -139,6 +139,7 @@ in
       TRUENORTH_NETWORK = "main";
       TRUENORTH_RPC_URL = "http://127.0.0.1:9554";
       TRUENORTH_RPC_COOKIE_PATH = "/var/lib/truenorth/.cookie";
+      TRUENORTH_INDEX_DATABASE = "/var/lib/northbound/chain.sqlite";
     };
 
     serviceConfig = {
@@ -146,6 +147,8 @@ in
       Group = "northbound";
 
       ExecStart = "${northbound-server}/bin/server";
+      StateDirectory = "northbound";
+      StateDirectoryMode = "0700";
       Restart = "always";
       RestartSec = 5;
     };

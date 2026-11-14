@@ -1,8 +1,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use crate::amount::MAX_MONEY;
-use crate::block::{Outpoint, Transaction as BlockTransaction};
 use crate::{Block, Error, Result};
+use truenorth_rpc::{MAX_MONEY, Outpoint, Transaction as BlockTransaction};
 
 pub(crate) fn insert_block_records(database: &Transaction<'_>, block: &Block) -> Result<()> {
     database.execute(
@@ -30,7 +29,7 @@ pub(crate) fn insert_block_records(database: &Transaction<'_>, block: &Block) ->
             database.execute(
                 "INSERT INTO outputs (txid, vout, amount, script, utxo_eligible) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![transaction.txid.as_slice(), vout as i64, output.amount,
-                    output.script, output.utxo_eligible(block.height)],
+                    output.script, utxo_eligible(&output.script, block.height)],
             )?;
         }
         if !transaction.is_coinbase && input_total < output_total {
@@ -40,6 +39,11 @@ pub(crate) fn insert_block_records(database: &Transaction<'_>, block: &Block) ->
         }
     }
     Ok(())
+}
+
+pub(crate) fn utxo_eligible(script: &[u8], block_height: i64) -> bool {
+    // Core skips genesis outputs and excludes OP_RETURN or oversized scripts.
+    block_height != 0 && script.first() != Some(&0x6a) && script.len() <= 10_000
 }
 
 fn insert_spends(

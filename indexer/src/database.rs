@@ -6,8 +6,8 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{Block, Error, Hash, Result};
 
-const APPLICATION_ID: i64 = 0x4e425849;
-const SCHEMA_VERSION: i64 = 1;
+pub(crate) const APPLICATION_ID: i64 = 0x4e425849;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChainTip {
@@ -61,6 +61,10 @@ impl IndexDatabase {
         initialize_schema(&mut connection, network, &genesis_hash)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
+        connection.execute(
+            "UPDATE sync_status SET ready = 0, pending_base_hash = NULL",
+            [],
+        )?;
         Ok(Self {
             connection,
             _writer_lock: writer_lock,
@@ -73,6 +77,7 @@ impl IndexDatabase {
     }
 
     pub fn apply_block(&mut self, block: &Block) -> Result<()> {
+        block.validate()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -96,6 +101,10 @@ impl IndexDatabase {
             }
         }
         crate::store_block::insert_block_records(&transaction, block)?;
+        transaction.execute(
+            "UPDATE sync_status SET ready = 0, pending_base_hash = NULL",
+            [],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -119,6 +128,10 @@ impl IndexDatabase {
         transaction.execute(
             "DELETE FROM blocks WHERE hash = ?1",
             [expected.hash.as_slice()],
+        )?;
+        transaction.execute(
+            "UPDATE sync_status SET ready = 0, pending_base_hash = NULL",
+            [],
         )?;
         transaction.commit()?;
         Ok(())
@@ -144,7 +157,7 @@ fn initialize_schema(connection: &mut Connection, network: &str, genesis: &Hash)
             "INSERT INTO index_state (singleton, network, genesis_hash) VALUES (1, ?1, ?2)",
             params![network, genesis.as_slice()],
         )?;
-    } else if application_id != APPLICATION_ID || version != SCHEMA_VERSION {
+    } else if application_id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
         return Err(Error::InvalidData(
             "unsupported index database schema".into(),
         ));
@@ -159,11 +172,14 @@ fn initialize_schema(connection: &mut Connection, network: &str, genesis: &Hash)
             "database network or genesis does not match the node".into(),
         ));
     }
+    if version < 2 {
+        transaction.execute_batch(include_str!("../migrations/002_pending.sql"))?;
+    }
     transaction.commit()?;
     Ok(())
 }
 
-fn read_tip(connection: &Connection) -> Result<Option<ChainTip>> {
+pub(crate) fn read_tip(connection: &Connection) -> Result<Option<ChainTip>> {
     let row: Option<(i64, Vec<u8>)> = connection
         .query_row(
             "SELECT height, hash FROM blocks ORDER BY height DESC LIMIT 1",

@@ -3,7 +3,7 @@
 set -eu
 
 usage() {
-    echo "Usage: $0 start|stop|create-wallet <wallet-name>|generate-coins <wallet-name> [blocks]|send-coins <wallet-name> <address> [amount]" >&2
+    echo "Usage: $0 start|stop|create-wallet <wallet-name>|get-address <wallet-name>|generate-coins <wallet-name> [blocks]|send-coins <wallet-name> <address> [amount]" >&2
     exit 1
 }
 
@@ -17,7 +17,7 @@ case "$command" in
     start | stop)
         [ "$#" -eq 0 ] || usage
         ;;
-    create-wallet)
+    create-wallet | get-address)
         [ "$#" -eq 1 ] || usage
         [ -n "$1" ] || usage
         ;;
@@ -49,6 +49,15 @@ if [ ! -x "$required_binary" ]; then
     exit 1
 fi
 
+load_wallet_if_needed() {
+    if "$cli_path" -regtest "-datadir=$data_directory" "-rpcwallet=$1" getwalletinfo >/dev/null 2>&1; then
+        return
+    fi
+
+    # loadwallet reports missing wallets and node failures to the caller.
+    "$cli_path" -regtest "-datadir=$data_directory" loadwallet "$1" >/dev/null
+}
+
 case "$command" in
     start)
         mkdir -p "$data_directory"
@@ -65,8 +74,14 @@ case "$command" in
         wallet_name=$1
         "$cli_path" -regtest "-datadir=$data_directory" -rpcwait createwallet "$wallet_name"
         ;;
+    get-address)
+        wallet_name=$1
+        load_wallet_if_needed "$wallet_name"
+        "$cli_path" -regtest "-datadir=$data_directory" "-rpcwallet=$wallet_name" getnewaddress
+        ;;
     generate-coins)
         wallet_name=$1
+        load_wallet_if_needed "$wallet_name"
         blocks=${2:-101}
         mining_address=$("$cli_path" -regtest "-datadir=$data_directory" "-rpcwallet=$wallet_name" getnewaddress)
         "$cli_path" -regtest "-datadir=$data_directory" generatetoaddress "$blocks" "$mining_address" >/dev/null
@@ -74,6 +89,7 @@ case "$command" in
         ;;
     send-coins)
         wallet_name=$1
+        load_wallet_if_needed "$wallet_name"
         receiving_address=$2
         amount=${3:-10}
         "$cli_path" \

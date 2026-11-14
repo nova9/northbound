@@ -1,12 +1,17 @@
-# Standalone SQLite indexer
+# SQLite indexer and queries
 
-This crate indexes confirmed TrueNorth blocks independently of the API server.
-It does not change server routes or wallet behavior. Mempool snapshots, wallet
-queries, API freshness responses, and pagination are not implemented here yet.
+This crate indexes confirmed TrueNorth blocks and coherent mempool snapshots.
+It provides read-only UTXO, script activity, transaction history, and transaction
+lookup functions. The API server runs its worker on a dedicated thread and uses
+these queries instead of request-time blockchain scans. RPC transport and exact
+block/transaction decoding live in the separate `truenorth-rpc` crate.
 
 ## Run
 
-Start a local unpruned regtest daemon with `./scripts/regtest-start.sh`, then:
+Normally, run `cargo run -p server`; it starts the indexer automatically with
+`.local/indexer/chain.sqlite` as its default database. Stop any standalone writer
+using that database first. For a standalone catch-up, start an unpruned regtest
+daemon with `./scripts/regtest.sh start`, then:
 
 ```sh
 mkdir -p .local/indexer
@@ -14,7 +19,7 @@ TRUENORTH_INDEX_DATABASE="$PWD/.local/indexer/chain.sqlite" \
   cargo run -p indexer -- --once
 ```
 
-`--once` reconciles the saved index with the node, catches up, and exits. Omit
+`--once` reconciles the saved index, publishes a mempool snapshot, and exits. Omit
 it to poll continuously; Ctrl-C stops the process. Reusing the database resumes
 from its highest committed block rather than rescanning genesis. Open the file
 in TablePlus to inspect the records; avoid editing it while the indexer runs.
@@ -27,8 +32,9 @@ in TablePlus to inspect the records; avoid editing it while the indexer runs.
 | `TRUENORTH_RPC_COOKIE_PATH` | `.local/truenorth/regtest/.cookie`; main uses `.local/truenorth/.cookie` |
 | `TRUENORTH_INDEX_POLL_SECONDS` | `2`; accepts 1–3600 |
 
-Use a new database file. Existing manually populated databases are rejected
-without migrating or deleting their records. The indexer uses a schema version
+Use a new database file or an existing index created by this crate. Version 1
+indexes migrate to version 2 without rescanning confirmed blocks. Manually
+populated databases are rejected without modifying their records. The indexer uses a schema version
 and application ID, verifies the network and genesis identity, enables foreign
 keys on its connection, and uses WAL with full synchronization.
 
@@ -70,7 +76,64 @@ identity, and database errors stop immediately. A missing historical block
 must be made available before retrying; pruned nodes are rejected.
 
 An indexed tip is an observation, not a promise that the node cannot reorganize
-immediately afterward. There is no API readiness or pending-state claim yet.
+immediately afterward. Manual edits are unsupported: tip comparison detects
+branch changes, not arbitrary missing or modified records.
+
+## Pending transactions and readiness
+
+Migration `002_pending.sql` adds pending transactions, outputs, spends, and
+snapshot status. The worker captures the node tip and mempool sequence, fetches
+decoded transactions (reusing unchanged cached transactions), orders parents
+before children, and rechecks the tip and sequence before publishing atomically.
+A snapshot is never mixed with confirmed data from a different base block.
+Block application and rollback invalidate readiness until pending data is rebuilt.
+Eviction and replacement remove the previous pending effects.
+
+Readiness requires equal indexed/observed tips, a matching pending base, and
+node contact and pending observation no older than **30 seconds**. RPC failure
+marks the index unavailable immediately. Data queries reject unavailable state
+instead of returning an empty wallet. A standalone `--once` snapshot also expires
+after 30 seconds without further observations. The server limits its polling
+interval to 1–10 seconds and stops if the worker fails permanently.
+
+## Query functions
+
+```rust,ignore
+let scripts = indexer::decode_addresses(&addresses, "regtest")?;
+let mut reader = indexer::IndexReader::open(&database_path, "regtest")?;
+let snapshot = reader.read_snapshot(&scripts)?;
+let utxos = snapshot.query_utxos()?;
+let activity = snapshot.query_script_activity()?;
+let history = snapshot.query_transaction_history(None, 100)?;
+```
+
+Address decoding supports TrueNorth witness programs, including P2QRH, and its
+mainnet/regtest Base58 prefixes. Invalid checksums and wrong-network addresses
+are rejected locally. Scripts are deduplicated, with at most 100 per request.
+
+One read transaction supplies results and indexed/observed metadata. UTXOs are
+confirmed, eligible outputs with neither confirmed nor pending spends. Pending
+outputs are history/activity only. Coinbase flags and confirmations are returned
+without hiding immature outputs; the caller must check maturity before signing.
+UTXO requests are bounded to 10,000 outputs and fail rather than silently truncate.
+
+Activity includes spent outputs. History deduplicates transactions across scripts
+and reports change as received value while outgoing amounts exclude owned outputs.
+Fees use all inputs minus all outputs and are attributed only when all inputs
+belong to the requested wallet scripts. With mixed ownership, fee and recipient
+are unknown and `sent_amount` is the wallet's net debit, including any unknown fee.
+
+History uses keyset pagination (1–200 transactions, default 100) with a cursor
+bound to the indexed tip hash and pending snapshot revision. Any tip change,
+including normal growth, or pending snapshot replacement rejects old cursors;
+restart from page one. There are no OFFSET queries. The wallet follows pages,
+restarts once on a changed snapshot, and bounds its display to 10,000 transactions.
+
+Query-plan inspection confirms script-index seeks and indexed outpoint/transaction
+lookups, starting from the requested scripts. History still processes matching
+wallet activity to order each page. Large histories and mempools need workload
+measurements; there is no capacity or query-latency guarantee. Pending snapshots
+currently accept at most 100,000 transactions.
 
 ## Verification
 
@@ -79,6 +142,7 @@ cargo fmt -p indexer -- --check
 cargo check -p indexer
 cargo test -p indexer
 ./scripts/test-truenorth-integration.sh indexer
+./scripts/test-truenorth-integration.sh server
 ```
 
 The integration harness creates an isolated daemon and removes its temporary
@@ -92,6 +156,10 @@ wrong-network rejection, executable catch-up, and equality with a clean rebuild.
 SQLite tests cover same-block parent/child spends, all-or-nothing failed writes,
 abrupt exits before and after commit, exclusive writer ownership, reader snapshot
 consistency, malformed data, duplicate IDs, and invalid spends.
+
+The server regtest test runs with `blockfilterindex=0` and no `txindex`, exercising
+pending receives, parent/child spends, RBF eviction, confirmation, reorganization,
+pagination invalidation, restart, and node failure through HTTP endpoints.
 
 Consensus-specific constants were checked against TrueNorth **v30.5.4** source:
 

@@ -2636,13 +2636,16 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 name = "indexer"
 version = "0.1.0"
 dependencies = [
+ "base58ck",
+ "bech32 0.12.0",
  "hex",
- "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "shared",
  "tempfile",
  "tokio",
+ "truenorth-rpc",
 ]
 
 [[package]]
@@ -4852,11 +4855,13 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "indexer",
  "reqwest",
- "serde",
  "serde_json",
  "shared",
+ "tempfile",
  "tokio",
+ "truenorth-rpc",
 ]
 
 [[package]]
@@ -5675,6 +5680,17 @@ dependencies = [
  "png 0.17.16",
  "thiserror 2.0.21",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "truenorth-rpc"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,10 +1,14 @@
+mod history;
+
+pub use history::fetch_transaction_history;
+
 use std::time::Duration;
 
 use shared::{
-    AddressActivityRequest, AddressActivityResponse, BroadcastTransactionResponse, ChainTip,
-    FeeEstimate, SignedTransactionRequest, TransactionHistory, TransactionHistoryRequest,
+    AddressActivityRequest, AddressActivityResponse, ApiErrorResponse,
+    BroadcastTransactionResponse, ChainTip, FeeEstimate, IndexStatus, SignedTransactionRequest,
     TransactionStatusRequest, TransactionStatusResponse, TransactionValidation, UtxoRequest,
-    UtxoResponse, WalletTransaction, WalletUtxo,
+    UtxoResponse, WalletUtxo,
 };
 
 const WALLET_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -66,39 +70,15 @@ pub async fn fetch_used_addresses(addresses: Vec<String>) -> Result<Vec<String>,
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
 
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("wallet server could not scan address activity: {error}"))?;
+    let response = require_success(response, "Could not load address activity").await?;
 
     let response = response
         .json::<AddressActivityResponse>()
         .await
         .map_err(|error| format!("wallet server returned invalid address activity: {error}"))?;
 
+    require_current_index(&response.index)?;
     Ok(response.used_addresses)
-}
-
-pub async fn fetch_transaction_history(
-    addresses: Vec<String>,
-) -> Result<Vec<WalletTransaction>, String> {
-    let request = TransactionHistoryRequest { addresses };
-    let response = http_client()?
-        .post(endpoint("/v1/transactions")?)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|error| format!("could not contact wallet server: {error}"))?;
-
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("wallet server could not load transaction history: {error}"))?;
-
-    let history = response
-        .json::<TransactionHistory>()
-        .await
-        .map_err(|error| format!("wallet server returned invalid transaction history: {error}"))?;
-
-    Ok(history.transactions)
 }
 
 pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, String> {
@@ -110,15 +90,14 @@ pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, Stri
         .await
         .map_err(|error| format!("could not contact wallet server: {error}"))?;
 
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("wallet server could not load spendable outputs: {error}"))?;
+    let response = require_success(response, "Could not load spendable outputs").await?;
 
     let response = response
         .json::<UtxoResponse>()
         .await
         .map_err(|error| format!("wallet server returned invalid spendable outputs: {error}"))?;
 
+    require_current_index(&response.index)?;
     Ok(response.utxos)
 }
 
@@ -183,4 +162,31 @@ pub async fn fetch_transaction_status(transaction_id: String) -> Result<bool, St
         })?;
 
     Ok(result.known)
+}
+
+async fn require_success(
+    response: reqwest::Response,
+    context: &str,
+) -> Result<reqwest::Response, String> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status();
+    match response.json::<ApiErrorResponse>().await {
+        Ok(error) => Err(format!("{context}: {}", error.message)),
+        Err(_) => Err(format!("{context}: server returned {status}")),
+    }
+}
+
+fn require_current_index(status: &IndexStatus) -> Result<(), String> {
+    if !status.ready
+        || !status.pending_available
+        || status.indexed_height.is_none()
+        || status.indexed_height != status.observed_node_height
+        || status.indexed_hash.is_none()
+        || status.indexed_hash != status.observed_node_hash
+    {
+        return Err("The wallet server is synchronizing or stale. Retry shortly.".into());
+    }
+    Ok(())
 }

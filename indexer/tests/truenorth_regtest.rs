@@ -2,10 +2,10 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use indexer::rpc::NodeClient;
 use indexer::{IndexDatabase, SyncProgress, synchronize_next_block};
 use rusqlite::{Connection, params};
 use serde_json::Value;
+use truenorth_rpc::NodeClient;
 
 fn run_cli(arguments: &[&str]) -> String {
     assert_eq!(

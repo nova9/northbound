@@ -6,7 +6,10 @@ license = "MIT"
 
 [dependencies]
 hex = "0.4.3"
-reqwest = { version = "0.13.5", features = ["json"] }
+truenorth-rpc = { path = "../truenorth-rpc" }
+shared = { path = "../shared" }
+bech32 = "0.12.0"
+base58 = { package = "base58ck", version = "0.1.101" }
 rusqlite = { version = "=0.42.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision"] }

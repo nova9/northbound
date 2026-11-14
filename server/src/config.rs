@@ -7,6 +7,8 @@ pub struct ServerConfig {
     pub rpc_url: String,
     pub rpc_cookie_path: PathBuf,
     pub network: String,
+    pub index_database: PathBuf,
+    pub index_poll_seconds: u64,
 }
 
 impl ServerConfig {
@@ -33,6 +35,15 @@ impl ServerConfig {
             .parse::<SocketAddr>()
             .map_err(|_| "TRUENORTH_SERVER_BIND must be a valid IP address and port".to_owned())?;
 
+        let index_poll_seconds = env::var("TRUENORTH_INDEX_POLL_SECONDS")
+            .unwrap_or_else(|_| "2".into())
+            .parse::<u64>()
+            .map_err(|_| "TRUENORTH_INDEX_POLL_SECONDS must be an integer".to_owned())?;
+        if !(1..=10).contains(&index_poll_seconds) {
+            return Err(
+                "TRUENORTH_INDEX_POLL_SECONDS must be between 1 and 10 for server freshness".into(),
+            );
+        }
         Ok(Self {
             bind_address,
             rpc_url: env::var("TRUENORTH_RPC_URL").unwrap_or_else(|_| default_rpc_url.to_owned()),
@@ -40,6 +51,10 @@ impl ServerConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from(default_cookie_path)),
             network,
+            index_database: env::var_os("TRUENORTH_INDEX_DATABASE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".local/indexer/chain.sqlite")),
+            index_poll_seconds,
         })
     }
 }

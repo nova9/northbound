@@ -2,8 +2,8 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use indexer::rpc::NodeClient;
-use indexer::{Error, IndexDatabase, Result, SyncProgress, synchronize_next_block};
+use indexer::{Error, IndexDatabase, Result, run_worker};
+use truenorth_rpc::NodeClient;
 
 #[tokio::main]
 async fn main() {
@@ -58,42 +58,11 @@ async fn run() -> Result<()> {
     node.fetch_tip().await?;
     let genesis = node.fetch_block_hash(0).await?;
     let mut database = IndexDatabase::open(&PathBuf::from(database_path), &network, genesis)?;
-    let mut rpc_failures = 0_u32;
-    loop {
-        let progress = match synchronize_next_block(&node, &mut database).await {
-            Ok(progress) => {
-                rpc_failures = 0;
-                progress
-            }
-            Err(Error::Rpc(message)) if rpc_failures < 5 => {
-                rpc_failures += 1;
-                eprintln!("Node contact failed; index freshness unknown: {message}");
-                tokio::time::sleep(Duration::from_secs(1_u64 << rpc_failures)).await;
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        match progress {
-            SyncProgress::Applied(tip) => {
-                println!("Indexed {} {}", tip.height, hex::encode(tip.hash))
-            }
-            SyncProgress::RolledBack(tip) => {
-                println!("Removed {} {}", tip.height, hex::encode(tip.hash))
-            }
-            SyncProgress::CaughtUp(tip) => {
-                println!(
-                    "Caught up at {} {} (confirmed blocks only)",
-                    tip.height,
-                    hex::encode(tip.hash)
-                );
-                if once {
-                    return Ok(());
-                }
-                tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-            }
-            SyncProgress::ChainChanged => {
-                tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-            }
-        }
-    }
+    run_worker(
+        &node,
+        &mut database,
+        Duration::from_secs(poll_seconds),
+        once,
+    )
+    .await
 }

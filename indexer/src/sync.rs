@@ -1,5 +1,5 @@
-use crate::rpc::NodeClient;
 use crate::{ChainTip, Error, IndexDatabase, Result};
+use truenorth_rpc::NodeClient;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SyncProgress {
@@ -15,6 +15,12 @@ pub async fn synchronize_next_block(
     database: &mut IndexDatabase,
 ) -> Result<SyncProgress> {
     let node_tip = node.fetch_tip().await?;
+    if node_tip.pruned {
+        return Err(Error::InvalidData(
+            "indexing requires an unpruned node with all historical blocks available".into(),
+        ));
+    }
+    database.record_node_observation(&node_tip)?;
     let saved_tip = database.tip()?;
     if let Some(tip) = &saved_tip {
         let replaced =

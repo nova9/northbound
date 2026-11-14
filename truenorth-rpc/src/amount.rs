@@ -3,9 +3,9 @@ use serde_json::Number;
 use crate::{Error, Result};
 
 // TrueNorth v30.5.4: src/consensus/amount.h. This is a consensus sanity ceiling.
-pub(crate) const MAX_MONEY: i64 = 1_000_000_000_000_000_000;
+pub const MAX_MONEY: i64 = 1_000_000_000_000_000_000;
 
-pub(crate) fn atomic_units(amount: &Number) -> Result<i64> {
+pub fn atomic_units(amount: &Number) -> Result<i64> {
     let text = amount.to_string();
     let invalid = || Error::InvalidData(format!("invalid monetary amount: {text}"));
     let (mantissa, exponent) = match text.split_once(['e', 'E']) {

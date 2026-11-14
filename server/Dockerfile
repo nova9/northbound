@@ -6,6 +6,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY server ./server
 COPY shared ./shared
 COPY wallet ./wallet
+COPY indexer ./indexer
+COPY truenorth-rpc ./truenorth-rpc
 
 RUN cargo build --locked --release --package server
 
@@ -21,6 +23,7 @@ COPY --from=builder /app/target/release/server /usr/local/bin/northbound-server
 USER northbound
 
 ENV TRUENORTH_SERVER_BIND=0.0.0.0:3000
+ENV TRUENORTH_INDEX_DATABASE=/home/northbound/indexer/chain.sqlite
 
 EXPOSE 3000
 

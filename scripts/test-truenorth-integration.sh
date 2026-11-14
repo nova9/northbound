@@ -4,11 +4,11 @@ set -eu
 
 test_package=${1:-wallet}
 case "$test_package" in
-    wallet | indexer) ;;
-    *) echo "Usage: $0 [wallet|indexer]" >&2; exit 1 ;;
+    wallet | indexer | server) ;;
+    *) echo "Usage: $0 [wallet|indexer|server]" >&2; exit 1 ;;
 esac
 if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [wallet|indexer]" >&2
+    echo "Usage: $0 [wallet|indexer|server]" >&2
     exit 1
 fi
 
@@ -49,13 +49,19 @@ trap cleanup EXIT INT TERM
 
 echo "Starting TrueNorth Core regtest node..."
 
+# Indexed API reads must work without the daemon's historical scan index.
+block_filter_index=1
+if [ "$test_package" = server ]; then
+    block_filter_index=0
+fi
+
 "$daemon_path" \
     -regtest \
     "-datadir=$test_data_directory" \
     "-rpcport=$rpc_port" \
     "-port=$p2p_port" \
     -server=1 \
-    -blockfilterindex=1 \
+    "-blockfilterindex=$block_filter_index" \
     -fallbackfee=0.00001000 \
     >"$node_log" 2>&1 &
 

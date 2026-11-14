@@ -4,6 +4,7 @@ members = [
     "server",
     "shared",
     "indexer",
+    "truenorth-rpc",
 ]
 resolver = "2"
 

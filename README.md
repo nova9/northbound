@@ -43,7 +43,8 @@ verification.
 wallet/   Dioxus desktop wallet and local signing
 server/   Axum API backed by truenorthd
 shared/   JSON request and response types
-indexer/  Standalone SQLite confirmed-chain indexer
+indexer/  SQLite chain index, pending snapshots, and wallet queries
+truenorth-rpc/ Shared daemon RPC transport and decoding
 scripts/  Local development and packaging helpers
 ```
 
@@ -61,13 +62,16 @@ Create and fund the development wallet, send coins, or stop the node:
 
 ```bash
 ./scripts/regtest.sh create-wallet funding
+./scripts/regtest.sh get-address funding
 ./scripts/regtest.sh generate-coins funding 101
 ./scripts/regtest.sh send-coins funding <receiving-address> [amount]
 ./scripts/regtest.sh stop
 ```
 
-Mining takes a loaded Core wallet name and defaults to 101 blocks; sending
-defaults to 10 NORTH. Development
+Mining takes a Core wallet name and defaults to 101 blocks; sending
+defaults to 10 NORTH. `get-address` generates a fresh receiving address for the
+named wallet. Address, mining, and sending commands automatically load an
+existing wallet when needed. Development
 commands share the persistent data directory `.local/truenorth/`.
 
 Run the server and wallet in separate terminals:
@@ -107,9 +111,19 @@ under `server/devops/` are managed independently.
 See [P2QRH test coverage](wallet/tests/truenorth/README.md) for the correspondence
 with Core's consensus tests.
 
-The [standalone SQLite indexer](indexer/README.md) can catch up with a daemon and
-follow reorganizations. It is not connected to the API server yet; the server
-continues to use its existing RPC query paths.
+The [server](server/README.md) starts the [SQLite indexer](indexer/README.md),
+follows reorganizations, and serves wallet data through indexed queries. It uses
+`.local/indexer/chain.sqlite` by default; set `TRUENORTH_INDEX_DATABASE` to change
+the path. Stop any standalone indexer writing that file before running the server.
+`GET /ready` reports catch-up and freshness; wallet data returns a retryable error
+until confirmed and pending snapshots are ready. Fee estimation, validation, and
+broadcast remain connected directly to the daemon.
+
+Run the complete indexed API checks with an isolated node:
+
+```sh
+./scripts/test-truenorth-integration.sh server
+```
 
 Build the mainnet desktop wallet for the host OS:
 
