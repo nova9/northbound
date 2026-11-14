@@ -132,6 +132,14 @@ Build the mainnet desktop wallet for the host OS:
 ./scripts/build-windows.ps1      # Windows MSI, run in PowerShell
 ```
 
+Publishing a GitHub release, including a pre-release such as `v0.1.0-rc.1`,
+runs the macOS release workflow. Commit the workflow before creating the tag.
+It builds the mainnet wallet for Apple Silicon and attaches an unsigned
+`Northbound-macos-arm64.zip` app archive and SHA-256 checksum to the release.
+Draft releases do not trigger builds. To build without publishing a release,
+use **Actions → macOS release build → Run workflow**; download the archive
+from that run's artifacts. macOS builds are not signed or notarized yet.
+
 Build and publish Docker images after setting `DOCKERHUB_REPOSITORY`:
 
 ```bash
