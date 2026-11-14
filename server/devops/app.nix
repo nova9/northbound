@@ -164,14 +164,26 @@ in
 
   services.caddy = {
     enable = true;
+    # IP clients omit SNI; EC2 exposes a private address to Caddy locally.
+    globalConfig = ''
+      default_sni 13.55.12.147
+    '';
 
-    virtualHosts.":80".extraConfig = ''
+    virtualHosts."https://13.55.12.147".extraConfig = ''
+      tls {
+        issuer acme {
+          dir https://acme-v02.api.letsencrypt.org/directory
+          profile shortlived
+        }
+      }
+
       reverse_proxy 127.0.0.1:3000
     '';
   };
 
   networking.firewall.allowedTCPPorts = [
     80
+    443
     9555
   ];
 }

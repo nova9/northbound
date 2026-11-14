@@ -16,6 +16,8 @@ const WALLET_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(WALLET_SERVER_REQUEST_TIMEOUT)
+        // Prevent redirects from bypassing the configured server's transport policy.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("could not create wallet server client: {error}"))
 }

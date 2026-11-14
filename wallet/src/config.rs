@@ -34,7 +34,7 @@ pub const WALLET_NETWORK: Network = Network::Mainnet;
 pub const DEFAULT_API_BASE_URL: &str = match option_env!("NORTHBOUND_API_BASE_URL") {
     Some(url) => url,
     None if cfg!(feature = "regtest") => "http://127.0.0.1:3000",
-    None => "http://13.55.12.147",
+    None => "https://13.55.12.147",
 };
 
 #[derive(Default, Deserialize, Serialize)]
@@ -59,10 +59,11 @@ pub(crate) fn current_api_base_url() -> Result<String, String> {
         return Err(error.clone());
     }
 
-    Ok(configuration
+    let url = configuration
         .custom_url
-        .clone()
-        .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_owned()))
+        .as_deref()
+        .unwrap_or(DEFAULT_API_BASE_URL);
+    validate_and_normalize_api_base_url(url)
 }
 
 pub(crate) fn custom_api_base_url() -> Result<Option<String>, String> {
@@ -132,6 +133,22 @@ fn validate_and_normalize_api_base_url(url: &str) -> Result<String, String> {
     }
     if parsed_url.host_str().is_none() {
         return Err("The wallet server URL must include a host.".to_owned());
+    }
+    if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+        return Err("The wallet server URL cannot include credentials.".to_owned());
+    }
+    let host = parsed_url.host_str().unwrap_or_default();
+    let is_loopback = host == "localhost"
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    if parsed_url.scheme() == "http" && !is_loopback {
+        return Err(
+            "Remote wallet servers must use https://. HTTP is only allowed for loopback addresses."
+                .to_owned(),
+        );
     }
     if parsed_url.query().is_some() || parsed_url.fragment().is_some() {
         return Err("The wallet server URL cannot include a query or fragment.".to_owned());
@@ -208,6 +225,40 @@ mod tests {
             validate_and_normalize_api_base_url("https://wallet.example.com?network=main").is_err()
         );
         assert!(validate_and_normalize_api_base_url("https://wallet.example.com#server").is_err());
+    }
+
+    #[test]
+    fn remote_servers_require_https() {
+        for host in [
+            "13.55.12.147",
+            "wallet.example.com",
+            "192.168.1.10",
+            "[2001:db8::1]",
+            "localhost.example.com",
+        ] {
+            assert!(validate_and_normalize_api_base_url(&format!("http://{host}")).is_err());
+            assert!(validate_and_normalize_api_base_url(&format!("https://{host}")).is_ok());
+        }
+    }
+
+    #[test]
+    fn loopback_servers_allow_http() {
+        for host in ["localhost", "127.0.0.1", "127.0.0.2", "[::1]"] {
+            assert!(validate_and_normalize_api_base_url(&format!("http://{host}:3000")).is_ok());
+        }
+    }
+
+    #[test]
+    fn server_url_rejects_credentials() {
+        assert!(
+            validate_and_normalize_api_base_url("https://user:password@wallet.example.com")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn default_server_satisfies_transport_policy() {
+        assert!(validate_and_normalize_api_base_url(super::DEFAULT_API_BASE_URL).is_ok());
     }
 }
 

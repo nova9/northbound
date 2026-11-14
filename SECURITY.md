@@ -15,6 +15,10 @@ server receives public addresses and signed transactions only.
 
 ## Server boundary
 
+- Remote wallet server URLs must use HTTPS. HTTP is accepted only for
+  `localhost` and loopback IP addresses. This applies to saved settings and
+  build-time defaults as well as newly entered URLs. API requests do not follow
+  redirects.
 - The API server defaults to `127.0.0.1:3000`. `TRUENORTH_SERVER_BIND` can
   explicitly select another IP address and port; loopback binding is not enforced.
 - The API has no authentication and exposes specific wallet operations, not
