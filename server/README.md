@@ -32,12 +32,21 @@ the server. Initial node/cookie failures prevent startup.
 | `POST /v1/transactions/validate` | Daemon mempool acceptance |
 | `POST /v1/transactions/broadcast` | Daemon broadcast |
 
-The first three requests take `addresses`. History additionally accepts optional
-`limit` (1–200) and `cursor`, and returns `next_cursor`. HTTP 409 means discard
+The first three requests take `addresses` (at most 100 per request). History also
+accepts optional `limit` (1–200) and `cursor`, and returns `next_cursor`. HTTP 409 means discard
 partial pages and restart. All three responses include `index` metadata with
 indexed/observed tips, node contact, pending observation, readiness, and the
 30-second freshness limit. An indexed snapshot can become outdated after it is
 observed; broadcasting does not imply the next index snapshot already contains it.
+
+The desktop wallet batches UTXO and address activity requests into groups of 100
+addresses. It accepts combined results only when every batch has the same indexed
+tip and `pending_revision`. This revision changes whenever the indexer publishes
+a pending snapshot; observation timestamps alone cannot identify a snapshot.
+If the snapshot changes, the wallet discards the results and asks the user to
+refresh. Servers without `pending_revision` still support single-batch requests;
+larger requests require an updated server. Transaction history does not yet batch
+addresses because its summaries cannot be combined exactly.
 
 `GET /v2/fees/estimate` returns `{"atomic_units_per_kvbyte":1001,"target_blocks":6}`,
 for example. One kvB is 1,000 virtual bytes. The rate is the highest of Core's

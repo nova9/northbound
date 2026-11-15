@@ -1,13 +1,14 @@
+mod addresses;
 mod history;
 
+pub use addresses::{fetch_used_addresses, fetch_utxos};
 pub use history::fetch_transaction_history;
 
 use std::time::Duration;
 
 use shared::{
-    AddressActivityRequest, AddressActivityResponse, ApiErrorResponse,
-    BroadcastTransactionResponse, ChainTip, FeeEstimateV2, IndexStatus, SignedTransactionRequest,
-    TransactionStatusRequest, TransactionStatusResponse, UtxoRequest, UtxoResponse, WalletUtxo,
+    ApiErrorResponse, BroadcastTransactionResponse, ChainTip, FeeEstimateV2, IndexStatus,
+    SignedTransactionRequest, TransactionStatusRequest, TransactionStatusResponse,
 };
 
 const WALLET_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,46 +61,6 @@ pub async fn fetch_fee_estimate() -> Result<FeeEstimateV2, String> {
         .json::<FeeEstimateV2>()
         .await
         .map_err(|error| format!("wallet server returned an invalid fee estimate: {error}"))
-}
-
-pub async fn fetch_used_addresses(addresses: Vec<String>) -> Result<Vec<String>, String> {
-    let request = AddressActivityRequest { addresses };
-    let response = http_client()?
-        .post(endpoint("/v1/addresses/activity")?)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|error| format!("could not contact wallet server: {error}"))?;
-
-    let response = require_success(response, "Could not load address activity").await?;
-
-    let response = response
-        .json::<AddressActivityResponse>()
-        .await
-        .map_err(|error| format!("wallet server returned invalid address activity: {error}"))?;
-
-    require_current_index(&response.index)?;
-    Ok(response.used_addresses)
-}
-
-pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, String> {
-    let request = UtxoRequest { addresses };
-    let response = http_client()?
-        .post(endpoint("/v1/utxos")?)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|error| format!("could not contact wallet server: {error}"))?;
-
-    let response = require_success(response, "Could not load spendable outputs").await?;
-
-    let response = response
-        .json::<UtxoResponse>()
-        .await
-        .map_err(|error| format!("wallet server returned invalid spendable outputs: {error}"))?;
-
-    require_current_index(&response.index)?;
-    Ok(response.utxos)
 }
 
 pub async fn broadcast_signed_transaction(transaction_hex: String) -> Result<String, String> {

@@ -16,6 +16,7 @@ struct SavedStatus {
     ready: bool,
     pending_base_hash: Option<Vec<u8>>,
     pending_observed_at: Option<u64>,
+    pending_revision: u64,
 }
 
 pub(crate) fn unix_time() -> Result<i64> {
@@ -46,7 +47,8 @@ pub(crate) fn read_status(connection: &Connection) -> Result<IndexStatus> {
     let tip = read_tip(connection)?;
     let status = connection.query_row(
         "SELECT observed_height, observed_hash, last_node_contact, ready,
-            pending_base_hash, pending_observed_at FROM sync_status WHERE singleton = 1",
+            pending_base_hash, pending_observed_at, pending_revision
+            FROM sync_status WHERE singleton = 1",
         [],
         |row| {
             Ok(SavedStatus {
@@ -56,6 +58,7 @@ pub(crate) fn read_status(connection: &Connection) -> Result<IndexStatus> {
                 ready: row.get(3)?,
                 pending_base_hash: row.get(4)?,
                 pending_observed_at: crate::queries::read_optional_u64(row, 5)?,
+                pending_revision: crate::queries::read_u64(row, 6)?,
             })
         },
     )?;
@@ -81,6 +84,37 @@ pub(crate) fn read_status(connection: &Connection) -> Result<IndexStatus> {
         last_node_contact: status.last_node_contact,
         pending_available,
         pending_observed_at: status.pending_observed_at,
+        pending_revision: Some(status.pending_revision),
         max_age_seconds: MAX_INDEX_AGE_SECONDS,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_status;
+    use crate::test_support::Fixture;
+
+    #[test]
+    fn pending_revision_identifies_snapshots_even_at_the_same_chain_tip() {
+        let mut fixture = Fixture::new(0);
+        let base = fixture.database.tip().unwrap().unwrap();
+        fixture
+            .database
+            .publish_mempool_snapshot(&base, 1, &[])
+            .unwrap();
+        let first = read_status(&fixture.reader()).unwrap();
+
+        fixture
+            .database
+            .publish_mempool_snapshot(&base, 2, &[])
+            .unwrap();
+        let second = read_status(&fixture.reader()).unwrap();
+
+        assert!(first.ready && second.ready);
+        assert_eq!(first.indexed_hash, second.indexed_hash);
+        assert_eq!(
+            second.pending_revision,
+            Some(first.pending_revision.unwrap() + 1)
+        );
+    }
 }

@@ -89,6 +89,8 @@ pub struct IndexStatus {
     pub last_node_contact: Option<u64>,
     pub pending_available: bool,
     pub pending_observed_at: Option<u64>,
+    /// Changes when the indexer publishes a new pending transaction snapshot.
+    pub pending_revision: Option<u64>,
     pub max_age_seconds: u64,
 }
 
