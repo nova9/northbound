@@ -150,13 +150,17 @@ Build the mainnet desktop wallet for the host OS:
 ```
 
 Publishing a GitHub release, including a pre-release such as `v0.1.0-rc.1`,
-runs the macOS release workflow. Commit the workflow before creating the tag.
-It builds the mainnet wallet for Apple Silicon and attaches an ad-hoc signed
-`Northbound-<tag>-macos-arm64.zip` app archive and SHA-256 checksum to the release
-(for example, `Northbound-v0.1.0-rc.1-macos-arm64.zip`).
+runs the macOS and Windows release workflows. Commit the workflows before creating
+the tag. They build the mainnet wallet and attach these files with SHA-256
+checksums to the release:
+
+- `Northbound-<tag>-macos-arm64.zip`: ad-hoc signed Apple Silicon app.
+- `Northbound-<tag>-windows-x64.msi`: Windows x64 installer.
+
 Draft releases do not trigger builds. To build without publishing a release,
-use **Actions → macOS release build → Run workflow**; download the archive
-from that run's artifacts. Manual builds use `dev-<short-commit>` in the filename.
+use **Actions → macOS release build** or **Windows release build → Run workflow**;
+download the files from that run's artifacts. Manual builds use
+`dev-<short-commit>` in the filename.
 macOS builds do not yet have an Apple Developer ID
 signature or notarization.
 
