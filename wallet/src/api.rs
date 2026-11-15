@@ -1,6 +1,9 @@
 mod addresses;
 mod history;
 
+#[cfg(test)]
+mod test_support;
+
 pub use addresses::{fetch_used_addresses, fetch_utxos};
 pub use history::fetch_transaction_history;
 

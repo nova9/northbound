@@ -18,6 +18,7 @@ pub const APPLICATION_IDENTIFIER: &str = "io.github.nova9.northbound";
 
 pub const WALLET_DESCRIPTION: &str = "A self-custodial wallet for TrueNorth";
 pub const CURRENCY_TICKER: &str = "NORTH";
+pub const MAX_ADDRESSES_PER_REQUEST: usize = 100;
 
 #[cfg(feature = "regtest")]
 pub const WALLET_NETWORK: Network = Network::Regtest;

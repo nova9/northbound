@@ -39,13 +39,41 @@ indexed/observed tips, node contact, pending observation, readiness, and the
 30-second freshness limit. An indexed snapshot can become outdated after it is
 observed; broadcasting does not imply the next index snapshot already contains it.
 
-The desktop wallet batches UTXO and address activity requests into groups of 100
+The desktop wallet batches UTXO, address activity, and history requests into groups of 100
 addresses. It accepts combined results only when every batch has the same indexed
 tip and `pending_revision`. This revision changes whenever the indexer publishes
 a pending snapshot; observation timestamps alone cannot identify a snapshot.
 If the snapshot changes, the wallet discards the results and asks the user to
-refresh. Transaction history does not yet batch
-addresses because its summaries cannot be combined exactly.
+refresh. History restarts the entire load once before asking the user to refresh.
+
+`POST /v1/transactions` returns `transactions`, `next_cursor`, and `index`.
+Each transaction has this structure:
+
+```json
+{
+  "transaction_id": "...",
+  "net_amount": -310000000,
+  "network_fee": 10000000,
+  "block_height": 120,
+  "confirmations": 1,
+  "timestamp": 1794700000
+}
+```
+
+Amounts are integer atomic units (100,000,000 per NORTH). `net_amount` is outputs
+to requested addresses minus inputs from them; positive values increase wallet
+holdings and negative values decrease them. Fee effects are already included.
+`network_fee` is the entire transaction's fee, independent of address ownership,
+and is null for coinbase transactions. It does not claim this wallet paid all of
+the fee. `block_height` is null and confirmations are zero while pending;
+`timestamp` is the block time when confirmed or first-seen time while pending.
+
+Fetch every page of each disjoint address batch, group entries by transaction ID,
+and sum only `net_amount`. Keep matching transaction metadata and the fee once;
+never sum or subtract the fee again. The wallet sorts the combined history with
+pending entries first, then descending block height and ascending transaction ID.
+It has no total history cap across pages. This replaces the old amount/address
+fields; deploy the updated wallet and server together.
 
 `POST /v1/utxos` always returns a page. It accepts optional `limit` (1–10,000,
 default 1,000) and `cursor` fields alongside `addresses`:

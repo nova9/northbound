@@ -142,7 +142,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         "fee_rate=1",
     ]);
     let pending = wait_history(&client, &url, &addresses, &payment, 0).await;
-    assert_eq!(pending.transactions[0].received_amount, 100_000_000);
+    assert_eq!(pending.transactions[0].net_amount, 100_000_000);
     // A pending snapshot change invalidates cursors even without a new block.
     assert_eq!(
         post(
@@ -203,9 +203,32 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         .iter()
         .find(|tx| tx.transaction_id == parent)
         .unwrap();
-    assert_eq!(parent_history.sent_amount, 50_000_000);
-    assert_eq!(parent_history.received_amount, 49_999_800);
-    assert_eq!(parent_history.fee, Some(200));
+    assert_eq!(parent_history.net_amount, -50_000_200);
+    assert_eq!(parent_history.network_fee, Some(200));
+    let mut combined_net_amount = 0_i64;
+    for address in [&receiving, &change] {
+        let batch: TransactionHistory = post(
+            &client,
+            &url,
+            "/v1/transactions",
+            json!({"addresses": [address], "limit": 100}),
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(batch.index.pending_revision, history.index.pending_revision);
+        let transaction = batch
+            .transactions
+            .iter()
+            .find(|tx| tx.transaction_id == parent)
+            .unwrap();
+        assert_eq!(transaction.network_fee, Some(200));
+        combined_net_amount += transaction.net_amount;
+    }
+    assert_eq!(combined_net_amount, parent_history.net_amount);
     let utxos: UtxoResponse = post(&client, &url, "/v1/utxos", json!({"addresses": addresses}))
         .await
         .json()
@@ -296,7 +319,12 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         json!({"addresses": ["not-an-address"]}),
         json!({"addresses": vec![receiving.clone(); 101]}),
     ] {
-        assert_eq!(post(&client, &url, "/v1/utxos", body).await.status(), 400);
+        for endpoint in ["/v1/utxos", "/v1/addresses/activity", "/v1/transactions"] {
+            assert_eq!(
+                post(&client, &url, endpoint, body.clone()).await.status(),
+                400
+            );
+        }
     }
     assert_eq!(
         post(

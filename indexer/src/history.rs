@@ -2,7 +2,6 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use shared::{TransactionHistory, WalletTransaction};
 
-use crate::address::address_from_script;
 use crate::queries::{ReadSnapshot, read_optional_u64, read_u64};
 use crate::{Error, Result, decode_hash};
 
@@ -124,37 +123,26 @@ impl ReadSnapshot<'_> {
         height: Option<u64>,
         timestamp: u64,
     ) -> Result<WalletTransaction> {
-        let mut received = 0_u64;
-        let mut external = 0_u64;
-        let mut output_total = 0_u64;
-        let mut received_at = None;
-        let mut sent_to = None;
-        let mut outputs = self.database.prepare(
-            "SELECT o.amount, o.script, r.address FROM all_outputs o
-             LEFT JOIN requested_scripts r ON r.script = o.script WHERE o.txid = ?1 ORDER BY o.vout",
+        let is_coinbase: bool = self.database.query_row(
+            "SELECT is_coinbase FROM all_transactions WHERE txid = ?1",
+            [id],
+            |row| row.get(0),
         )?;
-        let mut rows = outputs.query([id])?;
-        while let Some(row) = rows.next()? {
-            let amount = read_u64(row, 0)?;
-            let script: Vec<u8> = row.get(1)?;
-            let address: Option<String> = row.get(2)?;
+        let mut received = 0_u64;
+        let mut output_total = 0_u64;
+        let mut outputs = self.database.prepare(
+            "SELECT o.amount, EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
+             FROM all_outputs o WHERE o.txid = ?1",
+        )?;
+        for row in outputs.query_map([id], |row| Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?)))? {
+            let (amount, owned) = row?;
             output_total = add(output_total, amount)?;
-            if let Some(address) = address {
+            if owned {
                 received = add(received, amount)?;
-                if received_at.is_none() {
-                    received_at = Some(address);
-                }
-            } else {
-                external = add(external, amount)?;
-                if sent_to.is_none() {
-                    sent_to = address_from_script(&script, self.network);
-                }
             }
         }
         let mut total_input = 0;
         let mut owned_input = 0;
-        let mut all_owned = true;
-        let mut has_owned_input = false;
         let mut inputs = self.database.prepare(
             "SELECT o.amount, EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
              FROM all_spends s JOIN all_outputs o ON o.txid = s.previous_txid AND o.vout = s.previous_vout
@@ -165,30 +153,21 @@ impl ReadSnapshot<'_> {
             total_input = add(total_input, amount)?;
             if owned {
                 owned_input = add(owned_input, amount)?;
-                has_owned_input = true;
-            } else {
-                all_owned = false;
             }
         }
-        let mut fee = None;
-        let mut sent_amount = 0;
-        if has_owned_input {
-            received_at = None;
-            if all_owned {
-                sent_amount = external;
-                fee =
-                    Some(total_input.checked_sub(output_total).ok_or_else(|| {
-                        Error::InvalidData("history outputs exceed inputs".into())
-                    })?);
-            } else {
-                // Mixed ownership cannot attribute the whole payment or fee to
-                // this wallet. Show its net debit, with unknown fee/recipient.
-                sent_amount = owned_input.saturating_sub(received);
-                sent_to = None;
-            }
+        // Keep credits and debits signed: clamping at zero loses contributions
+        // when a client combines histories for different address batches.
+        let net_amount = i64::try_from(i128::from(received) - i128::from(owned_input))
+            .map_err(|_| Error::InvalidData("history net amount overflow".into()))?;
+        let network_fee = if is_coinbase {
+            None
         } else {
-            sent_to = None;
-        }
+            Some(
+                total_input
+                    .checked_sub(output_total)
+                    .ok_or_else(|| Error::InvalidData("history outputs exceed inputs".into()))?,
+            )
+        };
         let confirmations = match height {
             Some(height) => self
                 .status
@@ -200,11 +179,8 @@ impl ReadSnapshot<'_> {
         };
         Ok(WalletTransaction {
             transaction_id: hex::encode(id),
-            received_at,
-            sent_to,
-            received_amount: received,
-            sent_amount,
-            fee,
+            net_amount,
+            network_fee,
             block_height: height,
             confirmations,
             timestamp: Some(timestamp),
@@ -238,4 +214,136 @@ fn decode_cursor(text: Option<&str>) -> Result<Option<Cursor>> {
         ));
     }
     Ok(Some(cursor))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::test_support::{Fixture, block, hash, payment};
+    use crate::{IndexReader, ScriptAddress};
+
+    #[test]
+    fn mixed_input_batches_preserve_net_amount_and_repeat_the_whole_network_fee() {
+        for pending in [false, true] {
+            let mut fixture = Fixture::new(100);
+            let mut funding = payment(2000, 1001, "2");
+            funding["vout"][0]["scriptPubKey"]["hex"] = json!("52");
+            funding["vout"].as_array_mut().unwrap().push(json!({
+                "n": 1, "value": 8, "scriptPubKey": {"hex": "53"}
+            }));
+            fixture
+                .database
+                .apply_block(&block(101, 0, vec![funding]))
+                .unwrap();
+            let mut spend = payment(2001, 2000, "5");
+            spend["vout"][0]["scriptPubKey"]["hex"] = json!("54");
+            spend["vin"].as_array_mut().unwrap().push(json!({
+                "txid": hex::encode(hash(2000)), "vout": 1
+            }));
+            spend["vout"].as_array_mut().unwrap().push(json!({
+                "n": 1, "value": serde_json::from_str::<serde_json::Number>("4.9").unwrap(),
+                "scriptPubKey": {"hex": "55"}
+            }));
+            if pending {
+                let transaction = truenorth_rpc::decode_transaction(&spend.to_string()).unwrap();
+                let base = fixture.database.tip().unwrap().unwrap();
+                fixture
+                    .database
+                    .publish_mempool_snapshot(&base, 1, &[transaction])
+                    .unwrap();
+            } else {
+                fixture
+                    .database
+                    .apply_block(&block(102, 0, vec![spend]))
+                    .unwrap();
+                let base = fixture.database.tip().unwrap().unwrap();
+                fixture
+                    .database
+                    .publish_mempool_snapshot(&base, 1, &[])
+                    .unwrap();
+            }
+            let a = ScriptAddress {
+                address: "A".into(),
+                script: vec![0x52],
+            };
+            let b = ScriptAddress {
+                address: "B".into(),
+                script: vec![0x53],
+            };
+            let c = ScriptAddress {
+                address: "C".into(),
+                script: vec![0x54],
+            };
+            let external = ScriptAddress {
+                address: "recipient".into(),
+                script: vec![0x55],
+            };
+            let mut reader = IndexReader::open(&fixture.path(), "regtest").unwrap();
+            let mut summaries = Vec::new();
+            for addresses in [
+                vec![a.clone(), c.clone()],
+                vec![b.clone()],
+                vec![a, b, c],
+                vec![external],
+            ] {
+                let snapshot = reader.read_snapshot(&addresses).unwrap();
+                let history = snapshot.query_transaction_history(None, 100).unwrap();
+                summaries.push(
+                    history
+                        .transactions
+                        .into_iter()
+                        .find(|transaction| transaction.transaction_id == hex::encode(hash(2001)))
+                        .unwrap(),
+                );
+            }
+            assert_eq!(summaries[0].net_amount, 300_000_000);
+            assert_eq!(summaries[1].net_amount, -800_000_000);
+            assert_eq!(summaries[2].net_amount, -500_000_000);
+            assert_eq!(
+                summaries[0].net_amount + summaries[1].net_amount,
+                summaries[2].net_amount
+            );
+            assert_eq!(summaries[3].net_amount, 490_000_000);
+            for summary in summaries {
+                assert_eq!(summary.network_fee, Some(10_000_000));
+                assert_eq!(summary.confirmations, if pending { 0 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn coinbase_has_no_fee_and_self_payment_debits_only_the_fee() {
+        let mut fixture = Fixture::new(100);
+        fixture
+            .database
+            .apply_block(&block(101, 0, vec![payment(2000, 1001, "511.99999837")]))
+            .unwrap();
+        let base = fixture.database.tip().unwrap().unwrap();
+        fixture
+            .database
+            .publish_mempool_snapshot(&base, 1, &[])
+            .unwrap();
+        let mut reader = IndexReader::open(&fixture.path(), "regtest").unwrap();
+        let script = ScriptAddress {
+            address: "wallet".into(),
+            script: vec![0x51],
+        };
+        let snapshot = reader.read_snapshot(&[script]).unwrap();
+        let history = snapshot.query_transaction_history(None, 200).unwrap();
+        let self_payment = history
+            .transactions
+            .iter()
+            .find(|tx| tx.transaction_id == hex::encode(hash(2000)))
+            .unwrap();
+        assert_eq!(self_payment.net_amount, -163);
+        assert_eq!(self_payment.network_fee, Some(163));
+        let coinbase = history
+            .transactions
+            .iter()
+            .find(|tx| tx.transaction_id == hex::encode(hash(1101)))
+            .unwrap();
+        assert_eq!(coinbase.net_amount, 51_200_000_000);
+        assert_eq!(coinbase.network_fee, None);
+    }
 }

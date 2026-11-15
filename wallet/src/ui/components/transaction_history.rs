@@ -44,23 +44,18 @@ fn block_height(transaction: &WalletTransaction) -> String {
     }
 }
 
-fn is_sent(transaction: &WalletTransaction) -> bool {
-    transaction.sent_amount > 0
-}
-
 fn net_wallet_change(transaction: &WalletTransaction) -> String {
-    if !is_sent(transaction) {
-        return format!("+{}", format_north(transaction.received_amount));
-    }
-
-    let Some(total_debit) = transaction
-        .fee
-        .and_then(|fee| transaction.sent_amount.checked_add(fee))
-    else {
-        return "Unavailable".to_owned();
+    let sign = if transaction.net_amount < 0 {
+        "−"
+    } else if transaction.net_amount > 0 {
+        "+"
+    } else {
+        ""
     };
-
-    format!("−{}", format_north(total_debit))
+    format!(
+        "{sign}{}",
+        format_north(transaction.net_amount.unsigned_abs())
+    )
 }
 
 #[component]
@@ -74,11 +69,10 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
     let selected_transaction_id = selected_transaction.transaction_id.clone();
     let transaction_id_to_copy = selected_transaction_id.clone();
     let selected_status = status_label(selected_transaction);
-    let selected_is_sent = is_sent(selected_transaction);
     let selected_fee = selected_transaction
-        .fee
+        .network_fee
         .map(format_north)
-        .unwrap_or_else(|| "Unavailable".to_owned());
+        .unwrap_or_else(|| "Not applicable".to_owned());
     let status_class = if selected_transaction.confirmations == 0 {
         "transaction-status pending"
     } else {
@@ -97,13 +91,15 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                             } else {
                                 "transaction-row"
                             };
-                            let transaction_is_sent = is_sent(transaction);
-                            let direction = if transaction_is_sent { "Sent" } else { "Received" };
-                            let amount = if transaction_is_sent {
-                                format!("−{}", format_north(transaction.sent_amount))
+                            let transaction_is_sent = transaction.net_amount < 0;
+                            let direction = if transaction_is_sent {
+                                "Net sent"
+                            } else if transaction.net_amount > 0 {
+                                "Net received"
                             } else {
-                                format!("+{}", format_north(transaction.received_amount))
+                                "No net change"
                             };
+                            let amount = net_wallet_change(transaction);
                             let amount_class = if transaction_is_sent {
                                 "transaction-value sent"
                             } else {
@@ -169,30 +165,16 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                             dd { "{block_height(selected_transaction)}" }
                         }
                         div {
-                            dt { "Network fee" }
+                            dt { "Total network fee" }
                             dd {
-                                if selected_is_sent {
-                                    "{selected_fee}"
-                                } else {
-                                    "Paid by sender"
-                                }
+                                "{selected_fee}"
                             }
                         }
                         div {
                             dt { "Net wallet change" }
                             dd { "{net_wallet_change(selected_transaction)}" }
                         }
-                        if let Some(address) = &selected_transaction.sent_to {
-                            div {
-                                dt { "Sent to" }
-                                dd { code { "{address}" } }
-                            }
-                        } else if let Some(address) = &selected_transaction.received_at {
-                            div {
-                                dt { "Received at" }
-                                dd { code { "{address}" } }
-                            }
-                        }
+
                     }
 
                     div { class: "transaction-id",
@@ -229,7 +211,41 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
 
 #[cfg(test)]
 mod tests {
-    use super::{CURRENCY_TICKER, format_confirmation_count, format_north};
+    use super::{CURRENCY_TICKER, format_confirmation_count, format_north, net_wallet_change};
+    use shared::WalletTransaction;
+
+    #[test]
+    fn net_change_includes_fees_once_and_formats_both_directions_and_zero() {
+        let mut transaction = WalletTransaction {
+            transaction_id: "ab".repeat(32),
+            net_amount: -310_000_000,
+            network_fee: Some(10_000_000),
+            block_height: Some(120),
+            confirmations: 1,
+            timestamp: Some(1000),
+        };
+        assert_eq!(
+            net_wallet_change(&transaction),
+            format!("−3.10000000 {CURRENCY_TICKER}")
+        );
+        transaction.net_amount = 690_000_000;
+        assert_eq!(
+            net_wallet_change(&transaction),
+            format!("+6.90000000 {CURRENCY_TICKER}")
+        );
+        transaction.net_amount = 0;
+        assert_eq!(
+            net_wallet_change(&transaction),
+            format!("0.00000000 {CURRENCY_TICKER}")
+        );
+        transaction.net_amount = -10_000_000;
+        assert_eq!(
+            net_wallet_change(&transaction),
+            format!("−0.10000000 {CURRENCY_TICKER}")
+        );
+        transaction.net_amount = i64::MIN;
+        assert!(net_wallet_change(&transaction).starts_with('−'));
+    }
 
     #[test]
     fn atomic_units_are_formatted_as_north() {

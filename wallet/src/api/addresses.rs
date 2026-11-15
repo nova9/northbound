@@ -5,9 +5,9 @@ use shared::{
     MAX_UTXO_CURSOR_LENGTH, UtxoRequest, UtxoResponse, WalletUtxo,
 };
 
-use super::{endpoint, http_client, require_current_index, require_success};
+use crate::config::MAX_ADDRESSES_PER_REQUEST;
 
-const MAX_ADDRESSES_PER_REQUEST: usize = 100;
+use super::{endpoint, http_client, require_current_index, require_success};
 
 pub async fn fetch_used_addresses(addresses: Vec<String>) -> Result<Vec<String>, String> {
     if addresses.is_empty() {
@@ -146,7 +146,7 @@ async fn fetch_utxos_from_server(
     Ok(utxos)
 }
 
-fn unique_addresses(addresses: Vec<String>) -> Vec<String> {
+pub(super) fn unique_addresses(addresses: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
     for address in addresses {
@@ -185,29 +185,10 @@ fn require_matching_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-    use std::time::Duration;
-
     use serde_json::{Value, json};
 
     use super::*;
-
-    fn index() -> Value {
-        json!({
-            "ready": true, "indexed_height": 120, "indexed_hash": "ab".repeat(32),
-            "observed_node_height": 120, "observed_node_hash": "ab".repeat(32),
-            "last_node_contact": 1000, "pending_available": true,
-            "pending_observed_at": 1000, "pending_revision": 7, "max_age_seconds": 30
-        })
-    }
-
-    fn addresses(count: usize) -> Vec<String> {
-        (0..count)
-            .map(|number| format!("address-{number}"))
-            .collect()
-    }
+    use crate::api::test_support::{addresses, index, serve};
 
     fn response(request: &Value, activity: bool) -> Value {
         if activity {
@@ -229,56 +210,6 @@ mod tests {
             }));
         }
         json!({"utxos": utxos, "index": index()})
-    }
-
-    fn serve(
-        requests: usize,
-        reply: impl Fn(usize, Value) -> (u16, Value) + Send + 'static,
-    ) -> (String, thread::JoinHandle<Vec<Value>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let thread = thread::spawn(move || {
-            let mut received = Vec::new();
-            for number in 0..requests {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                let mut bytes = Vec::new();
-                let mut buffer = [0; 4096];
-                let body_start = loop {
-                    let count = stream.read(&mut buffer).unwrap();
-                    assert!(count > 0);
-                    bytes.extend_from_slice(&buffer[..count]);
-                    if let Some(position) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                        break position + 4;
-                    }
-                };
-                let headers = String::from_utf8(bytes[..body_start].to_vec()).unwrap();
-                let content_length: usize = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        if name.eq_ignore_ascii_case("content-length") {
-                            return Some(value.trim().parse().unwrap());
-                        }
-                        None
-                    })
-                    .unwrap();
-                while bytes.len() < body_start + content_length {
-                    let count = stream.read(&mut buffer).unwrap();
-                    assert!(count > 0);
-                    bytes.extend_from_slice(&buffer[..count]);
-                }
-                let request: Value = serde_json::from_slice(&bytes[body_start..]).unwrap();
-                received.push(request.clone());
-                let (status, body) = reply(number, request);
-                let body = body.to_string();
-                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
-            }
-            received
-        });
-        (url, thread)
     }
 
     fn fetch(addresses: Vec<String>, url: &str, activity: bool) -> Result<usize, String> {

@@ -122,17 +122,23 @@ tip and pending revision. Snapshot changes invalidate the cursor. The wallet
 checks consistency across all pages and address batches and discards partial
 results on failure. There is no total UTXO cap across pages.
 
-Activity includes spent outputs. History deduplicates transactions across scripts
-and reports change as received value while outgoing amounts exclude owned outputs.
-Fees use all inputs minus all outputs and are attributed only when all inputs
-belong to the requested wallet scripts. With mixed ownership, fee and recipient
-are unknown and `sent_amount` is the wallet's net debit, including any unknown fee.
+Activity includes spent outputs. History deduplicates transactions across scripts.
+Each entry returns signed `net_amount`: outputs to requested scripts minus inputs
+from them, in atomic units. This includes fee effects. The separate `network_fee`
+is the entire transaction's input total minus output total, regardless of address
+ownership; it is null for coinbase transactions. Clients sum only `net_amount`
+when merging the same transaction across disjoint address batches, and keep the
+fee once for display. No payment-recipient or gross sent/received fields are
+returned, because these cannot be combined reliably across batches.
 
 History uses keyset pagination (1–200 transactions, default 100) with a cursor
 bound to the indexed tip hash and pending snapshot revision. Any tip change,
 including normal growth, or pending snapshot replacement rejects old cursors;
-restart from page one. There are no OFFSET queries. The wallet follows pages,
-restarts once on a changed snapshot, and bounds its display to 10,000 transactions.
+restart from page one. There are no OFFSET queries. The wallet batches at most
+100 unique addresses, follows every page, and merges entries by transaction ID.
+It checks the same snapshot across all pages and batches, restarts the entire
+load once on a changed snapshot, and rejects partial or inconsistent responses.
+There is no total transaction cap across pages.
 
 Query-plan inspection confirms script-index seeks and indexed outpoint/transaction
 lookups, starting from the requested scripts. History still processes matching

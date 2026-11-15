@@ -29,11 +29,11 @@ pub struct TransactionHistoryRequest {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WalletTransaction {
     pub transaction_id: String,
-    pub received_at: Option<String>,
-    pub sent_to: Option<String>,
-    pub received_amount: u64,
-    pub sent_amount: u64,
-    pub fee: Option<u64>,
+    /// Outputs to requested addresses minus inputs from them, in atomic units.
+    /// Fee effects are already included. Positive values increase wallet holdings.
+    pub net_amount: i64,
+    /// The whole transaction's fee, regardless of address ownership; null for coinbase.
+    pub network_fee: Option<u64>,
     pub block_height: Option<u64>,
     pub confirmations: u64,
     pub timestamp: Option<u64>,

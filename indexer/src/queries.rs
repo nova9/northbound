@@ -10,13 +10,11 @@ use crate::{Error, Result};
 
 pub struct IndexReader {
     connection: Connection,
-    network: String,
 }
 
 pub struct ReadSnapshot<'a> {
     pub(crate) database: Transaction<'a>,
     pub status: IndexStatus,
-    pub(crate) network: &'a str,
 }
 
 impl IndexReader {
@@ -44,10 +42,7 @@ impl IndexReader {
             "PRAGMA temp_store = MEMORY;
             CREATE TEMP TABLE requested_scripts (script BLOB PRIMARY KEY, address TEXT NOT NULL);",
         )?;
-        Ok(Self {
-            connection,
-            network: network.into(),
-        })
+        Ok(Self { connection })
     }
 
     pub fn query_status(&mut self) -> Result<IndexStatus> {
@@ -79,7 +74,6 @@ impl IndexReader {
         Ok(ReadSnapshot {
             database: transaction,
             status,
-            network: &self.network,
         })
     }
 }
@@ -200,9 +194,8 @@ mod tests {
             .iter()
             .find(|tx| tx.transaction_id == hex::encode(hash(2000)))
             .unwrap();
-        assert_eq!(outgoing.received_amount, 51_099_999_837);
-        assert_eq!(outgoing.sent_amount, 100_000_000);
-        assert_eq!(outgoing.fee, Some(163));
+        assert_eq!(outgoing.net_amount, -100_000_163);
+        assert_eq!(outgoing.network_fee, Some(163));
         let mut ids = Vec::new();
         let mut cursor = None;
         loop {
@@ -343,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_input_ownership_does_not_attribute_whole_fee_to_wallet() {
+    fn mixed_input_ownership_keeps_the_whole_network_fee_separate_from_net_amount() {
         let mut fixture = Fixture::new(101);
         let mut mixed = payment(2000, 1001, "1023.99999837");
         mixed["vin"]
@@ -369,7 +362,7 @@ mod tests {
             .iter()
             .find(|tx| tx.transaction_id == hex::encode(hash(2000)))
             .unwrap();
-        assert_eq!(mixed.fee, None);
-        assert_eq!(mixed.sent_to, None);
+        assert_eq!(mixed.network_fee, Some(163));
+        assert_eq!(mixed.net_amount, -51_200_000_000);
     }
 }
