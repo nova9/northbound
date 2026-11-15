@@ -160,19 +160,38 @@ Build the mainnet desktop wallet for the host OS:
 ```
 
 Publishing a GitHub release, including a pre-release such as `v0.1.0-rc.1`,
-runs the macOS and Windows release workflows. Commit the workflows before creating
+runs the macOS, Windows, and Linux release workflows. Commit the workflows before creating
 the tag. They build the mainnet wallet and attach these files with SHA-256
 checksums to the release:
 
 - `Northbound-<tag>-macos-arm64.zip`: ad-hoc signed Apple Silicon app.
 - `Northbound-<tag>-windows-x64.msi`: Windows x64 installer.
+- `Northbound-<tag>-linux-x64.AppImage`: Linux x64 application.
 
 Draft releases do not trigger builds. To build without publishing a release,
-use **Actions → macOS release build** or **Windows release build → Run workflow**;
+select **macOS release build**, **Windows release build**, or **Linux release build**
+in **Actions**, then choose **Run workflow**;
 download the files from that run's artifacts. Manual builds use
 `dev-<short-commit>` in the filename.
 macOS builds do not yet have an Apple Developer ID
 signature or notarization.
+
+Linux builds use Ubuntu 24.04. The workflow installs GTK/WebKitGTK dependencies
+and checks that the packaged AppImage opens a window under Xvfb before uploading
+it. This launch check does not replace testing wallet operations on a Linux desktop.
+For local Ubuntu 24.04 builds, install the same packages listed in
+[the Linux workflow](.github/workflows/release-linux.yml), Rust with the
+`llvm-tools-preview` component, and Dioxus CLI 0.7.10, then run
+`./scripts/build-wallet.sh`.
+
+To launch a downloaded Linux package:
+
+```sh
+chmod +x Northbound-<tag>-linux-x64.AppImage
+./Northbound-<tag>-linux-x64.AppImage
+```
+
+If FUSE is unavailable, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 Mainnet builds use the local server by default. Set the server URL explicitly
 when building a wallet that should connect to a hosted server:
@@ -199,7 +218,7 @@ Both commands push the built image.
 ## Project status
 
 Northbound is under active development. Before a general release, the project
-still needs broader TrueNorth regtest coverage, Linux packaging,
+still needs broader TrueNorth regtest coverage, Linux desktop testing,
 signed release artifacts, independent review, and a clearly documented public
 server deployment.
 

@@ -2,7 +2,7 @@ name: Deploy website
 
 on:
   workflow_run:
-    workflows: [macOS release build, Windows release build]
+    workflows: [macOS release build, Windows release build, Linux release build]
     types: [completed]
   push:
     branches: [main]
@@ -40,12 +40,13 @@ jobs:
           # Website fixes must not require moving or rebuilding a release tag.
           ref: main
 
-      - name: Prepare website from the latest available release
+      - name: Select the latest complete release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp > "$RUNNER_TEMP/releases.json"
-          jq -e '
+          jq '
             add
             | map(select(.draft == false))
             | sort_by(.published_at)
@@ -54,25 +55,44 @@ jobs:
                 .tag_name as $tag
                 | "Northbound-\($tag)-macos-arm64.zip" as $archive
                 | "Northbound-\($tag)-windows-x64.msi" as $installer
+                | "Northbound-\($tag)-linux-x64.AppImage" as $appimage
                 | any(.assets[]; .name == $archive)
                   and any(.assets[]; .name == ($archive + ".sha256"))
                   and any(.assets[]; .name == $installer)
                   and any(.assets[]; .name == ($installer + ".sha256"))
+                  and any(.assets[]; .name == $appimage)
+                  and any(.assets[]; .name == ($appimage + ".sha256"))
               ))
             | first
           ' "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/release.json"
+
+          if jq -e '. == null' "$RUNNER_TEMP/release.json" > /dev/null; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            message="No published release has all three packages and checksums yet. Skipping deployment; the existing website stays online."
+            echo "$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare website
+        if: steps.release.outputs.available == 'true'
+        run: |
           python3 scripts/build-website.py "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/website"
 
       - name: Configure GitHub Pages
+        if: steps.release.outputs.available == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload website
+        if: steps.release.outputs.available == 'true'
         uses: actions/upload-pages-artifact@v4
         with:
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/website
 
       - name: Record uploaded artifact name
+        if: steps.release.outputs.available == 'true'
         id: artifact
         run: echo "name=github-pages-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
 
@@ -80,6 +100,7 @@ jobs:
     name: Deploy website
     # Finish the upload job before deployment discovers its artifact.
     needs: build
+    if: needs.build.outputs.artifact_name != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
