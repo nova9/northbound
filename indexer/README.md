@@ -102,7 +102,7 @@ interval to 1–10 seconds and stops if the worker fails permanently.
 let scripts = indexer::decode_addresses(&addresses, "regtest")?;
 let mut reader = indexer::IndexReader::open(&database_path, "regtest")?;
 let snapshot = reader.read_snapshot(&scripts)?;
-let utxos = snapshot.query_utxos()?;
+let utxo_page = snapshot.query_utxos(None, 1_000)?;
 let activity = snapshot.query_script_activity()?;
 let history = snapshot.query_transaction_history(None, 100)?;
 ```
@@ -115,7 +115,12 @@ One read transaction supplies results and indexed/observed metadata. UTXOs are
 confirmed, eligible outputs with neither confirmed nor pending spends. Pending
 outputs are history/activity only. Coinbase flags and confirmations are returned
 without hiding immature outputs; the caller must check maturity before signing.
-UTXO requests are bounded to 10,000 outputs and fail rather than silently truncate.
+UTXO pages accept 1–10,000 outputs; the server defaults to 1,000. Follow
+`next_cursor` until it is null to retrieve every output. Pages use a stable order
+of block height, transaction ID, and output index, and cursors identify the chain
+tip and pending revision. Snapshot changes invalidate the cursor. The wallet
+checks consistency across all pages and address batches and discards partial
+results on failure. There is no total UTXO cap across pages.
 
 Activity includes spent outputs. History deduplicates transactions across scripts
 and reports change as received value while outgoing amounts exclude owned outputs.

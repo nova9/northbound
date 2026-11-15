@@ -343,12 +343,21 @@ async fn assert_matches_scan(
     }
     assert_eq!(scan_total, scan_atomic_units(&scan.total_amount));
     let mut actual = BTreeMap::new();
-    for output in snapshot.query_utxos().unwrap() {
-        let outpoint = (output.transaction_id.clone(), output.output_index);
-        assert!(
-            actual.insert(outpoint, output).is_none(),
-            "duplicate indexed outpoint"
-        );
+    let mut cursor = None;
+    loop {
+        let page = snapshot.query_utxos(cursor.as_deref(), 17).unwrap();
+        assert!(page.utxos.len() <= 17);
+        for output in page.utxos {
+            let outpoint = (output.transaction_id.clone(), output.output_index);
+            assert!(
+                actual.insert(outpoint, output).is_none(),
+                "duplicate indexed outpoint"
+            );
+        }
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
     }
     assert_eq!(
         actual, expected,

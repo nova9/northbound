@@ -438,7 +438,13 @@ mod tests {
         assert!(reader.query_status().unwrap().ready);
         let snapshot = reader.read_snapshot(&[]).unwrap();
         assert!(snapshot.query_transaction_known(&txid).unwrap());
-        assert!(snapshot.query_utxos().unwrap().is_empty());
+        assert!(
+            snapshot
+                .query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)
+                .unwrap()
+                .utxos
+                .is_empty()
+        );
     }
 
     const GENESIS: [u8; 32] = [1; 32];

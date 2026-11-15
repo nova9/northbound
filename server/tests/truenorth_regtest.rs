@@ -74,6 +74,61 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     let mining = run_cli(&["getnewaddress"]);
     run_cli(&["generatetoaddress", "101", &mining]);
     wait_ready(&client, &url, 101).await;
+    // A single mining address has enough outputs to require multiple pages.
+    let mut cursor = None;
+    let mut mining_outputs = Vec::new();
+    let mut snapshot_revision = None;
+    loop {
+        let page: UtxoResponse = post(
+            &client,
+            &url,
+            "/v1/utxos",
+            json!({"addresses": [mining.clone()], "limit": 17, "cursor": cursor}),
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(page.utxos.len() <= 17);
+        assert_eq!(page.index.indexed_height, Some(101));
+        if let Some(revision) = snapshot_revision {
+            assert_eq!(page.index.pending_revision, Some(revision));
+        } else {
+            snapshot_revision = page.index.pending_revision;
+        }
+        mining_outputs.extend(page.utxos);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(mining_outputs.len(), 101);
+    let complete: UtxoResponse = post(
+        &client,
+        &url,
+        "/v1/utxos",
+        json!({"addresses": [mining.clone()]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert!(complete.next_cursor.is_none());
+    assert_eq!(mining_outputs, complete.utxos);
+    let first_page: UtxoResponse = post(
+        &client,
+        &url,
+        "/v1/utxos",
+        json!({"addresses": [mining.clone()], "limit": 1}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let mining_cursor = first_page.next_cursor.unwrap();
+
     let receiving = run_cli(&["getnewaddress"]);
     let change = run_cli(&["getnewaddress"]);
     let change2 = run_cli(&["getnewaddress"]);
@@ -88,6 +143,18 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     ]);
     let pending = wait_history(&client, &url, &addresses, &payment, 0).await;
     assert_eq!(pending.transactions[0].received_amount, 100_000_000);
+    // A pending snapshot change invalidates cursors even without a new block.
+    assert_eq!(
+        post(
+            &client,
+            &url,
+            "/v1/utxos",
+            json!({"addresses": [mining.clone()], "cursor": mining_cursor, "limit": 1})
+        )
+        .await
+        .status(),
+        409
+    );
     let activity: AddressActivityResponse = post(
         &client,
         &url,
@@ -242,6 +309,13 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         .status(),
         400
     );
+    for body in [
+        json!({"addresses": addresses, "limit": 0}),
+        json!({"addresses": addresses, "limit": 10_001}),
+        json!({"addresses": addresses, "cursor": "invalid"}),
+    ] {
+        assert_eq!(post(&client, &url, "/v1/utxos", body).await.status(), 400);
+    }
     let malformed = client
         .post(format!("{url}/v1/utxos"))
         .header("content-type", "application/json")

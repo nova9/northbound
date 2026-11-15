@@ -22,7 +22,7 @@ the server. Initial node/cookie failures prevent startup.
 
 | Endpoint | Source |
 |---|---|
-| `POST /v1/utxos` | Indexed confirmed outputs, excluding current pending spends |
+| `POST /v1/utxos` | Paginated confirmed outputs, excluding current pending spends |
 | `POST /v1/addresses/activity` | Indexed confirmed and pending output history |
 | `POST /v1/transactions` | Indexed confirmed and pending history, paginated |
 | `POST /v1/transactions/status` | Index lookup, then daemon lookup if not yet observed |
@@ -33,8 +33,8 @@ the server. Initial node/cookie failures prevent startup.
 | `POST /v1/transactions/broadcast` | Daemon broadcast |
 
 The first three requests take `addresses` (at most 100 per request). History also
-accepts optional `limit` (1–200) and `cursor`, and returns `next_cursor`. HTTP 409 means discard
-partial pages and restart. All three responses include `index` metadata with
+accepts optional `limit` (1–200) and `cursor`, and returns `next_cursor`.
+All three responses include `index` metadata with
 indexed/observed tips, node contact, pending observation, readiness, and the
 30-second freshness limit. An indexed snapshot can become outdated after it is
 observed; broadcasting does not imply the next index snapshot already contains it.
@@ -44,9 +44,24 @@ addresses. It accepts combined results only when every batch has the same indexe
 tip and `pending_revision`. This revision changes whenever the indexer publishes
 a pending snapshot; observation timestamps alone cannot identify a snapshot.
 If the snapshot changes, the wallet discards the results and asks the user to
-refresh. Servers without `pending_revision` still support single-batch requests;
-larger requests require an updated server. Transaction history does not yet batch
+refresh. Transaction history does not yet batch
 addresses because its summaries cannot be combined exactly.
+
+`POST /v1/utxos` always returns a page. It accepts optional `limit` (1–10,000,
+default 1,000) and `cursor` fields alongside `addresses`:
+
+```json
+{"addresses":["rnorth..."],"limit":1000,"cursor":null}
+```
+
+The response contains `utxos`, `next_cursor`, and `index`. Repeat the same
+addresses with the returned cursor until `next_cursor` is null; only then is the
+result complete. Outputs are ordered by block height, transaction ID, and output
+index. There is no total output cap across pages. A cursor is tied to the chain
+tip and pending snapshot revision. HTTP 409 means discard every page and address
+batch and restart; never use a partial result as a balance. The desktop wallet
+loads all pages in each address batch and rejects changes between responses.
+Deploy the updated wallet and server together; callers must follow pagination.
 
 `GET /v2/fees/estimate` returns `{"atomic_units_per_kvbyte":1001,"target_blocks":6}`,
 for example. One kvB is 1,000 virtual bytes. The rate is the highest of Core's

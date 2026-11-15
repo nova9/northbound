@@ -8,6 +8,7 @@ mod queries;
 mod status;
 mod store_block;
 mod sync;
+mod utxos;
 mod worker;
 
 #[cfg(test)]

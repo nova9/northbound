@@ -75,7 +75,7 @@ impl From<indexer::Error> for ApiError {
             indexer::Error::Unavailable(message) => Self::unavailable(message),
             indexer::Error::CursorChanged => Self {
                 status: StatusCode::CONFLICT,
-                message: "The index changed; restart history pagination.".into(),
+                message: "The index changed; restart pagination.".into(),
             },
             error => {
                 eprintln!("Index query failed: {error}");

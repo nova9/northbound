@@ -23,7 +23,7 @@ impl fmt::Display for Error {
             Self::Unavailable(message) => write!(formatter, "index unavailable: {message}"),
             Self::InvalidRequest(message) => write!(formatter, "{message}"),
             Self::CursorChanged => {
-                write!(formatter, "the index changed; restart history pagination")
+                write!(formatter, "the index changed; restart pagination")
             }
         }
     }

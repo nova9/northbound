@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use indexer::{IndexReader, decode_addresses};
 use shared::{
-    AddressActivityRequest, AddressActivityResponse, IndexStatus, TransactionHistory,
-    TransactionHistoryRequest, UtxoRequest, UtxoResponse,
+    AddressActivityRequest, AddressActivityResponse, DEFAULT_UTXO_PAGE_SIZE, IndexStatus,
+    TransactionHistory, TransactionHistoryRequest, UtxoRequest, UtxoResponse,
 };
 
 use crate::{AppState, error::ApiError};
@@ -67,10 +67,10 @@ pub(crate) async fn utxos(
     let scripts = decode_addresses(&request.addresses, &state.network)?;
     let response = query_index(state, move |reader| {
         let snapshot = reader.read_snapshot(&scripts)?;
-        Ok(UtxoResponse {
-            utxos: snapshot.query_utxos()?,
-            index: snapshot.status.clone(),
-        })
+        snapshot.query_utxos(
+            request.cursor.as_deref(),
+            request.limit.unwrap_or(DEFAULT_UTXO_PAGE_SIZE),
+        )
     })
     .await?;
     Ok(Json(response))

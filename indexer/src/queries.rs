@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, Transaction, params};
-use shared::{IndexStatus, WalletUtxo};
+use shared::IndexStatus;
 
 use crate::address::ScriptAddress;
 use crate::database::{APPLICATION_ID, SCHEMA_VERSION};
@@ -85,48 +85,6 @@ impl IndexReader {
 }
 
 impl ReadSnapshot<'_> {
-    pub fn query_utxos(&self) -> Result<Vec<WalletUtxo>> {
-        let height = self
-            .status
-            .indexed_height
-            .ok_or_else(|| Error::Unavailable("indexed tip is missing".into()))?;
-        // Keep the small requested set first so SQLite seeks by script instead
-        // of scanning every output and checking whether it was requested.
-        let mut statement = self.database.prepare(
-            "SELECT o.txid, o.vout, o.amount, o.script, b.height, t.is_coinbase
-             FROM requested_scripts r CROSS JOIN outputs o ON o.script = r.script
-             JOIN transactions t ON t.txid = o.txid JOIN blocks b ON b.hash = t.block_hash
-             WHERE o.utxo_eligible = 1
-               AND NOT EXISTS (SELECT 1 FROM spends WHERE previous_txid = o.txid AND previous_vout = o.vout)
-               AND NOT EXISTS (SELECT 1 FROM mempool_spends WHERE previous_txid = o.txid AND previous_vout = o.vout)
-             ORDER BY b.height, o.txid, o.vout LIMIT 10001",
-        )?;
-        let rows = statement.query_map([], |row| {
-            let txid: Vec<u8> = row.get(0)?;
-            let script: Vec<u8> = row.get(3)?;
-            let block_height = read_u64(row, 4)?;
-            Ok(WalletUtxo {
-                transaction_id: hex::encode(txid),
-                output_index: row.get(1)?,
-                amount: read_u64(row, 2)?,
-                script_pubkey: hex::encode(script),
-                block_height,
-                confirmations: height - block_height + 1,
-                coinbase: row.get(5)?,
-            })
-        })?;
-        let mut outputs = Vec::new();
-        for row in rows {
-            outputs.push(row?);
-        }
-        if outputs.len() > 10_000 {
-            return Err(Error::InvalidRequest(
-                "request exceeds the 10,000 output limit".into(),
-            ));
-        }
-        Ok(outputs)
-    }
-
     pub fn query_script_activity(&self) -> Result<Vec<String>> {
         let mut statement = self.database.prepare(
             "SELECT address FROM requested_scripts r
@@ -216,7 +174,10 @@ mod tests {
         let mut requested = scripts();
         requested.push(requested[0].clone());
         let snapshot = reader.read_snapshot(&requested).unwrap();
-        let utxos = snapshot.query_utxos().unwrap();
+        let utxos = snapshot
+            .query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)
+            .unwrap()
+            .utxos;
         assert!(
             !utxos
                 .iter()
@@ -290,8 +251,9 @@ mod tests {
         let snapshot = reader.read_snapshot(&requested).unwrap();
         assert!(
             !snapshot
-                .query_utxos()
+                .query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)
                 .unwrap()
+                .utxos
                 .iter()
                 .any(|output| output.transaction_id == hex::encode(hash(1001)))
         );
@@ -333,8 +295,9 @@ mod tests {
         let snapshot = reader.read_snapshot(&requested).unwrap();
         assert!(
             snapshot
-                .query_utxos()
+                .query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)
                 .unwrap()
+                .utxos
                 .iter()
                 .any(|output| output.transaction_id == hex::encode(hash(1001)))
         );
@@ -358,7 +321,13 @@ mod tests {
         let old = reader.read_snapshot(&scripts()).unwrap();
         fixture.database.apply_block(&block(3, 0, vec![])).unwrap();
         assert_eq!(old.status.indexed_height, Some(2));
-        assert_eq!(old.query_utxos().unwrap().len(), 2);
+        assert_eq!(
+            old.query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)
+                .unwrap()
+                .utxos
+                .len(),
+            2
+        );
         drop(old);
         assert!(!reader.query_status().unwrap().ready);
         ready(&mut fixture, 2);

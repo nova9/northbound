@@ -60,7 +60,13 @@ pub struct AddressActivityResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UtxoRequest {
     pub addresses: Vec<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<u16>,
 }
+
+pub const DEFAULT_UTXO_PAGE_SIZE: u16 = 1_000;
+pub const MAX_UTXO_PAGE_SIZE: u16 = 10_000;
+pub const MAX_UTXO_CURSOR_LENGTH: usize = 1_024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WalletUtxo {
@@ -76,6 +82,7 @@ pub struct WalletUtxo {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UtxoResponse {
     pub utxos: Vec<WalletUtxo>,
+    pub next_cursor: Option<String>,
     pub index: IndexStatus,
 }
 
