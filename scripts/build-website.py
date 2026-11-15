@@ -16,6 +16,7 @@ def build_website(release, output_directory):
     packages = {
         "macos": f"Northbound-{tag}-macos-arm64.zip",
         "windows": f"Northbound-{tag}-windows-x64.msi",
+        "linux": f"Northbound-{tag}-linux-x64.AppImage",
     }
     downloads = {}
     for platform, filename in packages.items():

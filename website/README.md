@@ -9,19 +9,19 @@ uses a small Python preparation step to fill in release metadata.
 The independent **Deploy website** workflow publishes this directory to GitHub
 Pages. It runs when website files change on `main`, when a release build finishes
 successfully, or manually from **Actions → Deploy website → Run workflow**.
-It never builds the wallet. The macOS and Windows workflows build and upload packages.
+It never builds the wallet. The macOS, Windows, and Linux workflows build and upload packages.
 
 Each deployment uses website source from `main` and the most recently published
-release or prerelease that already has its macOS ZIP, Windows x64 MSI, and both
-checksums attached.
+release or prerelease that already has its macOS ZIP, Windows x64 MSI, Linux x64
+AppImage, and all three checksums attached.
 A newer release still being built does not hide the previous working download.
 The page labels prereleases explicitly. Rerunning an older release cannot roll
 the website back because selection always uses publication dates and available
 assets. Manual wallet packaging runs do not trigger a website deployment.
 
 `scripts/build-website.py` reads the published release metadata and fills in the
-version and both download URLs. It requires `Northbound-<tag>-macos-arm64.zip`,
-`Northbound-<tag>-windows-x64.msi`, and each package's `.sha256` file before
+version and all three download URLs. It requires `Northbound-<tag>-macos-arm64.zip`,
+`Northbound-<tag>-windows-x64.msi`, `Northbound-<tag>-linux-x64.AppImage`, and each package's `.sha256` file before
 deployment, so a missing download fails the job instead of publishing a broken
 link. Generated files are uploaded as a Pages artifact; source HTML is not
 rewritten or committed.
@@ -53,8 +53,8 @@ python3 scripts/build-website.py /tmp/northbound-release.json /tmp/northbound-we
 python3 -m http.server 8000 --directory /tmp/northbound-website
 ```
 
-Use a new output directory for each build. The Linux button remains disabled and
-labeled “Coming soon.” Windows downloads use the x64 MSI installer.
+Use a new output directory for each build. Linux downloads use the x64 AppImage;
+Windows downloads use the x64 MSI installer.
 
 ## Design and review
 

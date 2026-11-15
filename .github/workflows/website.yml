@@ -2,7 +2,7 @@ name: Deploy website
 
 on:
   workflow_run:
-    workflows: [macOS release build, Windows release build]
+    workflows: [macOS release build, Windows release build, Linux release build]
     types: [completed]
   push:
     branches: [main]
@@ -54,10 +54,13 @@ jobs:
                 .tag_name as $tag
                 | "Northbound-\($tag)-macos-arm64.zip" as $archive
                 | "Northbound-\($tag)-windows-x64.msi" as $installer
+                | "Northbound-\($tag)-linux-x64.AppImage" as $appimage
                 | any(.assets[]; .name == $archive)
                   and any(.assets[]; .name == ($archive + ".sha256"))
                   and any(.assets[]; .name == $installer)
                   and any(.assets[]; .name == ($installer + ".sha256"))
+                  and any(.assets[]; .name == $appimage)
+                  and any(.assets[]; .name == ($appimage + ".sha256"))
               ))
             | first
           ' "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/release.json"

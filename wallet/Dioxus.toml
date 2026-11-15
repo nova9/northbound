@@ -8,3 +8,6 @@ icon = ["icons/icon.icns", "icons/icon.ico"]
 
 [windows]
 icon_path = "icons/icon.ico"
+
+[linux]
+icon = ["icons/icon.iconset/icon_256x256.png"]
