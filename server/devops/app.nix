@@ -8,7 +8,7 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "nova9";
       repo = "northbound";
-      rev = "99217429ec661fd4cb738b9a7d619b527062a07c";
+      rev = "66fa1d91444185a60c8273a7b8dc20d2d3ee130b";
       hash = pkgs.lib.fakeHash;
     };
 
