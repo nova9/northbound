@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title description">
+  <title id="title">Northbound</title>
+  <desc id="description">A lighter way to hold NORTH. A self-custodial wallet for TrueNorth.</desc>
+  <rect width="1280" height="320" rx="12" fill="#172337"/>
+  <g transform="translate(72 88) scale(4.5)">
+    <rect width="32" height="32" rx="8" fill="#243B59"/>
+    <g fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 24V10L16 24V10"/>
+      <path d="M20.5 10H21C25.7 10 25.7 17 21 17H17.3M17.3 17H21C25.7 17 25.7 24 21 24H20.5"/>
+    </g>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="264" y="143" fill="#FFFFFF" font-size="76" font-weight="650" letter-spacing="-2">Northbound</text>
+    <text x="268" y="196" fill="#D1DCE9" font-size="30">A lighter way to hold NORTH.</text>
+    <text x="268" y="240" fill="#AFC8E8" font-size="22">Self-custodial. Built for TrueNorth.</text>
+  </g>
+</svg>

@@ -1,10 +1,14 @@
-<img src="wallet/assets/logo.svg" alt="Northbound logo" width="96" height="96">
+[![Northbound — A lighter way to hold NORTH.](.github/assets/readme-banner.svg)](https://northboundwallet.org)
 
-# Northbound
+<p align="center">
+  <a href="https://northboundwallet.org">Website</a> ·
+  <a href="https://github.com/nova9/northbound/releases">Downloads</a> ·
+  <a href="#local-development">Getting started</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="ROADMAP.md">Roadmap</a>
+</p>
 
-[northboundwallet.org](https://northboundwallet.org)
-
-Northbound is an experimental, self-custodial lightweight desktop wallet for
+Northbound is a self-custodial lightweight desktop wallet for
 [TrueNorth](https://github.com/truenorth-project/truenorth).
 
 The desktop application is built with Rust and Dioxus. It creates addresses,
@@ -12,9 +16,13 @@ stores encrypted wallet secrets, and signs transactions on the user's device.
 A separate Rust and Axum API reads public blockchain data from `truenorthd` and
 broadcasts transactions that have already been signed by the wallet.
 
-Northbound is an independent community project. It is not an official
-TrueNorth wallet and has not received an independent security audit. Do not use
-it with significant funds.
+> Northbound is an independent community project, not an official TrueNorth
+> wallet. It has not received an independent security
+> audit. Do not use it with significant funds.
+
+<p align="center">
+  <img src="website/assets/image.png" alt="Northbound welcome screen, with options to create or restore a wallet and guidance for backing up recovery words." width="1000">
+</p>
 
 ## Current capabilities
 
@@ -44,14 +52,14 @@ verification.
 
 ## Repository structure
 
-```text
-wallet/   Dioxus desktop wallet and local signing
-server/   Axum API backed by truenorthd
-shared/   JSON request and response types
-indexer/  SQLite chain index, pending snapshots, and wallet queries
-truenorth-rpc/ Shared daemon RPC transport and decoding
-scripts/  Local development and packaging helpers
-```
+| Directory | Purpose |
+| --- | --- |
+| [wallet/](wallet/) | Dioxus desktop wallet and local signing |
+| [server/](server/) | Axum API backed by `truenorthd` |
+| [shared/](shared/) | JSON request and response types |
+| [indexer/](indexer/) | SQLite chain index, pending snapshots, and wallet queries |
+| [truenorth-rpc/](truenorth-rpc/) | Shared daemon RPC transport and decoding |
+| [scripts/](scripts/) | Local development and packaging helpers |
 
 ## Local development
 
@@ -142,6 +150,8 @@ Run the complete indexed API checks with an isolated node:
 ./scripts/test-truenorth-integration.sh server
 ```
 
+## Building and releases
+
 Build the mainnet desktop wallet for the host OS:
 
 ```bash
@@ -164,6 +174,16 @@ download the files from that run's artifacts. Manual builds use
 macOS builds do not yet have an Apple Developer ID
 signature or notarization.
 
+Mainnet builds use the local server by default. Set the server URL explicitly
+when building a wallet that should connect to a hosted server:
+
+```bash
+NORTHBOUND_API_BASE_URL="https://wallet-api.example.com" \
+  cargo build -p wallet --release --no-default-features --features mainnet
+```
+
+## Container images
+
 Build and publish Docker images after setting `DOCKERHUB_REPOSITORY`:
 
 ```bash
@@ -176,18 +196,10 @@ inheritance; the daemon version comes from `server/devops/truenorthd/VERSION.txt
 Both commands push the built image.
 `APP_SLUG` and `DOCKER_PLATFORMS` remain available as environment overrides.
 
-Mainnet builds use the local server by default. Set the server URL explicitly
-when building a wallet that should connect to a hosted server:
-
-```bash
-NORTHBOUND_API_BASE_URL="https://wallet-api.example.com" \
-  cargo build -p wallet --release --no-default-features --features mainnet
-```
-
 ## Project status
 
 Northbound is under active development. Before a general release, the project
-still needs broader TrueNorth regtest coverage, Windows and Linux packaging,
+still needs broader TrueNorth regtest coverage, Linux packaging,
 signed release artifacts, independent review, and a clearly documented public
 server deployment.
 
