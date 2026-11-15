@@ -34,3 +34,6 @@ for size in 16 32 128 256 512; do
 done
 
 iconutil -c icns "$iconset_directory" -o "$icons_directory/icon.icns"
+
+sips -s format ico "$iconset_directory/icon_256x256.png" \
+    --out "$icons_directory/icon.ico"

@@ -1,7 +1,9 @@
 use dioxus::desktop::muda::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let window_icon = dioxus::desktop::icon_from_memory(include_bytes!("../icons/icon.png"))?;
     let window = dioxus::desktop::WindowBuilder::new()
+        .with_window_icon(Some(window_icon))
         .with_inner_size(dioxus::desktop::LogicalSize::new(1080.0, 640.0))
         .with_min_inner_size(dioxus::desktop::LogicalSize::new(1080.0, 640.0))
         .with_always_on_top(false);

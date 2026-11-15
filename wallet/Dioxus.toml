@@ -4,4 +4,7 @@ name = "Northbound"
 [bundle]
 publisher = "Northbound"
 identifier = "io.github.nova9.northbound"
-icon = ["icons/icon.icns"]
+icon = ["icons/icon.icns", "icons/icon.ico"]
+
+[windows]
+icon_path = "icons/icon.ico"
