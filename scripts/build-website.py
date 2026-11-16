@@ -52,6 +52,7 @@ def build_website(release, output_directory):
     (output_directory / "index.html").write_text(page)
     shutil.copyfile(source_directory / "styles.css", output_directory / "styles.css")
     shutil.copyfile(source_directory / "carousel.js", output_directory / "carousel.js")
+    shutil.copyfile(source_directory / "donation.js", output_directory / "donation.js")
     shutil.copytree(source_directory / "assets", output_directory / "assets")
 
 

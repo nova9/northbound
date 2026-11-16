@@ -82,12 +82,31 @@ a.platform-download:hover { background: var(--blue-hover); color: white; }
 .release-note { display: flex; align-items: baseline; gap: 24px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
 .release-note h3 { font-size: .94rem; flex-shrink: 0; }
 .release-note p { font-size: .94rem; color: var(--muted); }
-.faq { display: grid; grid-template-columns: 1.25fr 1fr; gap: 100px; padding-block: 48px 80px; border-top: 1px solid var(--line); }
-.faq-answers article + article { margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--line); }
-.faq-answers p { margin-top: 12px; color: var(--muted); max-width: 60ch; }
+.faq { padding-block: 32px 48px; border-top: 1px solid var(--line); }
+.faq h2, .donation h2 { font-size: clamp(2rem, 3.5vw, 2.75rem); }
+.faq-answers { display: grid; gap: 36px; margin-top: 36px; }
+.faq-answers article { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.6fr); gap: 64px; }
+.faq-answers h3 { font-size: 1.1rem; line-height: 1.5; max-width: 25ch; }
+.faq-answer { min-width: 0; }
+.faq-answer p { color: var(--muted); max-width: 70ch; }
+.faq-answer p + p { margin-top: 12px; }
 .open-source { display: grid; grid-template-columns: 1.25fr 1fr; gap: 100px; padding-block: 48px 80px; border-top: 1px solid var(--line); }
 .open-source p { color: var(--muted); max-width: 50ch; }
 .open-source a { display: inline-block; margin-top: 20px; padding-block: 8px; }
+.donate-button { display: block; width: fit-content; margin-top: 24px; border-radius: 12px; }
+.donate-button img { display: block; max-width: 100%; height: auto; }
+.donate-button:hover { opacity: .9; }
+.donation { display: grid; grid-template-columns: 1fr 1.2fr; align-items: start; gap: 64px; padding-block: 32px 48px; border-top: 1px solid var(--line); }
+.donation p { margin-top: 12px; max-width: 60ch; color: var(--muted); }
+.donation-details { min-width: 0; }
+.donation-address-box { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.donation-address { display: block; flex: 1; min-width: 0; color: var(--ink); font-size: .9rem; line-height: 1.7; overflow-wrap: anywhere; user-select: all; }
+.copy-address { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--blue); cursor: pointer; }
+.copy-address:hover { background: #d9e9ff; color: var(--blue-hover); }
+.copy-address:disabled { opacity: .6; cursor: wait; }
+.copy-address[hidden] { display: none; }
+.donation .copy-address-status { margin-top: 8px; font-size: .85rem; }
+.copy-address-status:empty { display: none; }
 .site-footer { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 1px solid var(--line); padding-block: 24px 32px; }
 .site-footer p, .footer-links a { font-size: .8rem; }
 .site-footer p { color: var(--muted); }
@@ -100,7 +119,10 @@ a.platform-download:hover { background: var(--blue-hover); color: white; }
 @media (max-width: 850px) {
   .wrap { width: calc(100% - 48px); }
   nav { gap: 20px; }
-  .ownership-layout, .open-source, .faq { gap: 48px; }
+  .ownership-layout, .open-source { gap: 48px; }
+  .donation { grid-template-columns: 1fr; gap: 24px; }
+  .faq-answers article { grid-template-columns: 1fr; gap: 12px; }
+  .faq-answers h3 { max-width: none; }
   .hero { padding-top: 56px; }
   .hero-intro { grid-template-columns: 1fr; gap: 28px; }
   .hero-actions p { max-width: 48ch; }
@@ -126,7 +148,7 @@ a.platform-download:hover { background: var(--blue-hover); color: white; }
   .carousel-previous { grid-column: 2; grid-row: 2; }
   .carousel-next { grid-column: 3; grid-row: 2; }
   .ownership { padding-block: 48px; }
-  .ownership-layout, .open-source, .faq { grid-template-columns: 1fr; gap: 36px; }
+  .ownership-layout, .open-source { grid-template-columns: 1fr; gap: 36px; }
   .ownership-intro p { max-width: 45ch; }
   .ownership-intro a { margin-top: 16px; }
   .release { padding-block: 54px; }
@@ -135,7 +157,9 @@ a.platform-download:hover { background: var(--blue-hover); color: white; }
   .download-list { grid-template-columns: 1fr; gap: 12px; }
   .platform-download { min-height: 84px; padding: 16px 20px; }
   .open-source { padding-block: 40px 48px; gap: 24px; }
-  .faq { padding-block: 40px 48px; gap: 24px; }
+  .faq { padding-block: 28px 36px; }
+  .faq-answers { margin-top: 24px; }
+  .donation { padding-block: 28px 32px; }
   .site-footer { gap: 12px 24px; }
   .site-footer p { order: 3; flex-basis: 100%; }
 }

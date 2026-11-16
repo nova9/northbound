@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="#donate"><img src=".github/assets/donate-north.svg" alt="Donate NORTH — a little thank-you" width="234" height="56"></a>
+  <a href="#donate"><img src="website/assets/donate-north.svg" alt="Donate NORTH — a little thank-you" width="234" height="56"></a>
 </p>
 
 Northbound is a self-custodial lightweight desktop wallet for

@@ -9,6 +9,7 @@
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
   <script src="carousel.js" defer></script>
+  <script src="donation.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -118,28 +119,55 @@
         <aside class="release-note"><h3>Keep your recovery words safe.</h3><p>Back up your twelve recovery words. Keep them private and offline.</p></aside>
       </div>
     </section>
+    <section class="donation wrap" id="donate" aria-labelledby="donation-title">
+      <div>
+        <h2 id="donation-title">Take it for a spin.</h2>
+        <p>Try sending a little NORTH our way. It’s a fun way to test your first transaction and say thanks.</p>
+        <a class="donate-button" href="#donation-address"><img src="assets/donate-north.svg" width="234" height="56" alt="Donate NORTH — a little thank-you"></a>
+      </div>
+      <div class="donation-details">
+        <h3>Send NORTH to this address</h3>
+        <div class="donation-address-box">
+          <code class="donation-address" id="donation-address" tabindex="0">north1z5h0t57p3tg2dzgtnfjy45skkttmrw00uygajdcq092ctnpjy5dkstw30q8</code>
+          <button class="copy-address" type="button" aria-label="Copy donation address" title="Copy address" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>
+          </button>
+        </div>
+        <p class="copy-address-status" role="status" aria-live="polite"></p>
+        <p>Copy the address into your wallet and choose an amount. Review the recipient, amount, and network fee before signing. Thank you!</p>
+      </div>
+    </section>
     <section class="faq wrap" aria-labelledby="faq-title">
       <h2 id="faq-title">Before you get started.</h2>
       <div class="faq-answers">
         <article>
           <h3>What if I lose my computer?</h3>
-          <p>Install Northbound on another computer and restore your wallet with your twelve recovery words. Recovery needs a server that can scan your wallet’s history. Keep the words private and offline: anyone with them can spend your funds.</p>
-          <p>If you lose both your wallet file and your recovery words, Northbound cannot recover your funds.</p>
+          <div class="faq-answer">
+            <p>Install Northbound on another computer and restore your wallet with your twelve recovery words. Recovery needs a server that can scan your wallet’s history. Keep the words private and offline: anyone with them can spend your funds.</p>
+            <p>If you lose both your wallet file and your recovery words, Northbound cannot recover your funds.</p>
+          </div>
         </article>
         <article>
           <h3>Can the server access my funds?</h3>
-          <p>Your recovery words, private keys, and password stay on your device. Transactions are signed locally, so the server cannot spend your funds. It receives public addresses and signed transactions, and can see the addresses you query.</p>
-          <p>You still rely on the server for accurate blockchain data. It can withhold or delay information. Read the <a href="https://github.com/nova9/northbound/blob/main/SECURITY.md">security model</a> for details.</p>
+          <div class="faq-answer">
+            <p>Your recovery words, private keys, and password stay on your device. Transactions are signed locally, so the server cannot spend your funds. It receives public addresses and signed transactions, and can see the addresses you query.</p>
+            <p>You still rely on the server for accurate blockchain data. It can withhold or delay information. Read the <a href="https://github.com/nova9/northbound/blob/main/SECURITY.md">security model</a> for details.</p>
+          </div>
         </article>
         <article>
           <h3>Do I need to run a full node?</h3>
-          <p>No. Northbound connects to a server backed by a TrueNorth full node for balances, transaction history, fees, and broadcasting. You need an internet connection to fetch that data and send transactions.</p>
+          <div class="faq-answer">
+            <p>No. Northbound connects to a server backed by a TrueNorth full node for balances, transaction history, fees, and broadcasting. You need an internet connection to fetch that data and send transactions.</p>
+          </div>
         </article>
       </div>
     </section>
     <section class="open-source wrap" aria-labelledby="source-title">
       <h2 id="source-title">Open to inspection.<br>Built in the open.</h2>
-      <div><p>Northbound is an independent community project, written in Rust and Dioxus and released under the MIT License.</p><a href="https://github.com/nova9/northbound">Explore the repository <span aria-hidden="true">↗</span></a></div>
+      <div>
+        <p>Northbound is an independent community project, written in Rust and Dioxus and released under the MIT License.</p>
+        <a href="https://github.com/nova9/northbound">Explore the repository <span aria-hidden="true">↗</span></a>
+      </div>
     </section>
   </main>
   <footer class="site-footer wrap">
@@ -148,6 +176,7 @@
     <nav class="footer-links" aria-label="Help and releases">
       <a href="https://github.com/nova9/northbound/issues">Help &amp; bug reports <span aria-hidden="true">↗</span></a>
       <a href="https://github.com/nova9/northbound/releases">All releases <span aria-hidden="true">↗</span></a>
+      <a href="#donate">Donate NORTH</a>
     </nav>
   </footer>
 </body>
