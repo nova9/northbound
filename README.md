@@ -8,6 +8,10 @@
   <a href="ROADMAP.md">Roadmap</a>
 </p>
 
+<p align="center">
+  <a href="#donate"><img src=".github/assets/donate-north.svg" alt="Donate NORTH — a little thank-you" width="234" height="56"></a>
+</p>
+
 Northbound is a self-custodial lightweight desktop wallet for
 [TrueNorth](https://github.com/truenorth-project/truenorth).
 
@@ -236,6 +240,19 @@ server deployment.
 Bug reports and technical review are welcome. Please report security problems
 privately and never include recovery words, private keys, passwords, or live
 RPC credentials.
+
+## Donate
+
+Enjoy using Northbound? You can support the project with an optional NORTH donation.
+
+Send **NORTH** to:
+
+```text
+north1z5h0t57p3tg2dzgtnfjy45skkttmrw00uygajdcq092ctnpjy5dkstw30q8
+```
+
+Copy the address into your wallet, choose an amount, and review the recipient,
+amount, and network fee before signing. Thank you for supporting Northbound!
 
 ## License
 
