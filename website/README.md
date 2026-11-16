@@ -1,6 +1,6 @@
 # Northbound website
 
-Static HTML and CSS, using the wallet's logo and visual identity. Open
+Static HTML and CSS with a small JavaScript screenshot carousel, using the wallet's logo and visual identity. Open
 `website/index.html` to preview without installing anything. Release deployment
 uses a small Python preparation step to fill in release metadata.
 
@@ -76,8 +76,31 @@ System typography, 6px button corners, and flat sections carry the same identity
 larger headings and spacing belong to this public product page.
 
 The hero pairs the headline with its introduction and download action above the
-wallet screenshot. Downloads use a three-column platform row that stacks on phones.
-The screenshot is the supplied `assets/image.png`, converted to `assets/image.avif`.
+wallet screenshot carousel. Downloads use a three-column platform row that stacks on phones.
+Installation guidance covers the macOS ZIP, unsigned Windows MSI, and Linux
+AppImage. A short FAQ explains recovery and the server trust boundary; the footer
+links to GitHub Issues for help and bug reports.
+Screenshots use `assets/wallet-<screen>.png` for the supplied originals and matching
+`.avif` files for the website: `send`, `history`, `list`, and `welcome`.
+The AVIF files preserve the original dimensions and transparency, converted with
+ImageMagick at quality 75. To regenerate a screenshot, run:
+
+```sh
+magick website/assets/wallet-send.png -quality 75 website/assets/wallet-send.avif
+```
+
+The carousel uses a fixed 27:16 screenshot area without an outer frame, with
+direct Welcome, Send, History, and Wallets selectors and a visible selected state.
+It supports previous/next buttons, left/right arrow keys when its
+image track is focused, and native touch scrolling. Slides advance every five
+seconds, with a Play/Pause control. Rotation pauses on hover, keyboard focus,
+touch interaction, and hidden browser tabs. Reduced-motion preferences disable
+automatic rotation by default; visitors can still choose Play. Without JavaScript, screenshots remain
+available in the horizontally scrollable track. Release generation copies
+`carousel.js` alongside the HTML and CSS.
+The styled carousel was checked at 1440px, 768px, 390px, and 320px with no
+horizontal overflow. Browser checks covered selectors, previous/next wraparound,
+keyboard navigation, image loading, reduced motion, and the no-JavaScript fallback.
 
 The source includes keyboard focus, a skip link, reduced-motion handling, and
 responsive layouts at 850px and 580px. Headless Chrome checks at 1440px, 768px,
@@ -86,3 +109,6 @@ The Windows download update was visually checked at 1440px and 390px with no
 horizontal overflow. Release selection was checked with a newer incomplete
 release and then with both packages present.
 Manual keyboard, screen-reader, and zoom checks remain outstanding.
+The installation guidance, FAQ, and footer were checked in headless Chrome at
+1440px, 768px, 390px, and 320px with no horizontal overflow. Desktop and phone
+screenshots were reviewed, and release generation passed with fixture metadata.
