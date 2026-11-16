@@ -22,6 +22,7 @@ the server. Initial node/cookie failures prevent startup.
 
 | Endpoint | Source |
 |---|---|
+| `GET /info` | Server release version from Cargo |
 | `POST /v1/utxos` | Paginated confirmed outputs, excluding current pending spends |
 | `POST /v1/addresses/activity` | Indexed confirmed and pending output history |
 | `POST /v1/transactions` | Indexed confirmed and pending history, paginated |
@@ -31,6 +32,11 @@ the server. Initial node/cookie failures prevent startup.
 | `GET /v2/fees/estimate` | Precise daemon fee estimate and policy floors in atomic units/kvB |
 | `POST /v1/transactions/validate` | Daemon mempool acceptance |
 | `POST /v1/transactions/broadcast` | Daemon broadcast |
+
+`GET /info` returns `{"version":"0.1.0"}` (using the running server's Cargo
+package version). Clients can check this before loading wallet data to identify
+supported server releases. It requires no node or index query and uses the normal
+API rate limit. A 404 from an older server means version discovery is unavailable.
 
 The first three requests take `addresses` (at most 100 per request). History also
 accepts optional `limit` (1–200) and `cursor`, and returns `next_cursor`.

@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ServerInfo {
+    pub version: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ChainTip {
     pub height: u64,
 }

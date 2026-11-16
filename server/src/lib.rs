@@ -37,6 +37,7 @@ impl AppState {
 pub fn build_router(state: Arc<AppState>, requests_per_second: NonZeroU32) -> Router {
     let rate_limit = Arc::new(rate_limit::RateLimit::new(requests_per_second));
     Router::new()
+        .route("/info", get(api::server_info))
         .route("/v1/chain/tip", get(node_routes::chain_tip))
         .route("/v1/fees/estimate", get(node_routes::fee_estimate))
         .route("/v2/fees/estimate", get(node_routes::fee_estimate_v2))
@@ -64,4 +65,44 @@ pub fn build_router(state: Arc<AppState>, requests_per_second: NonZeroU32) -> Ro
         .route("/ready", get(api::readiness))
         .layer(axum::middleware::map_response(error::format_response))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request, http::StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn info_returns_package_version_without_a_node_or_index() {
+        let directory = tempfile::tempdir().unwrap();
+        let node = NodeClient::new(
+            "http://127.0.0.1:1",
+            directory.path().join("missing-cookie"),
+            "regtest",
+        )
+        .unwrap();
+        let state = Arc::new(AppState::new(
+            node,
+            directory.path().join("missing-index.sqlite"),
+            "regtest".into(),
+        ));
+        let router = build_router(state, NonZeroU32::new(100).unwrap());
+
+        let response = router
+            .oneshot(Request::get("/info").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            info,
+            serde_json::json!({"version": env!("CARGO_PKG_VERSION")})
+        );
+    }
 }

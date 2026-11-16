@@ -4,10 +4,16 @@ use axum::{Json, extract::State, http::StatusCode};
 use indexer::{IndexReader, decode_addresses};
 use shared::{
     AddressActivityRequest, AddressActivityResponse, DEFAULT_UTXO_PAGE_SIZE, IndexStatus,
-    TransactionHistory, TransactionHistoryRequest, UtxoRequest, UtxoResponse,
+    ServerInfo, TransactionHistory, TransactionHistoryRequest, UtxoRequest, UtxoResponse,
 };
 
 use crate::{AppState, error::ApiError};
+
+pub(crate) async fn server_info() -> Json<ServerInfo> {
+    Json(ServerInfo {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
+}
 
 pub(crate) async fn query_index<T, F>(state: Arc<AppState>, query: F) -> Result<T, ApiError>
 where

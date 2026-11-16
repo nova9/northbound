@@ -2634,7 +2634,7 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 
 [[package]]
 name = "indexer"
-version = "0.1.0"
+version = "0.2.0-alpha.1"
 dependencies = [
  "base58ck",
  "bech32 0.12.0",
@@ -4852,7 +4852,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.0"
+version = "0.2.0-alpha.1"
 dependencies = [
  "axum",
  "indexer",
@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.1.0"
+version = "0.2.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5685,7 +5685,7 @@ dependencies = [
 
 [[package]]
 name = "truenorth-rpc"
-version = "0.1.0"
+version = "0.2.0-alpha.1"
 dependencies = [
  "hex",
  "reqwest",
@@ -5852,7 +5852,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.1.0"
+version = "0.2.0-alpha.1"
 dependencies = [
  "arboard",
  "argon2",
