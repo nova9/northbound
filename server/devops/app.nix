@@ -9,10 +9,10 @@ let
       owner = "nova9";
       repo = "northbound";
       rev = "66fa1d91444185a60c8273a7b8dc20d2d3ee130b";
-      hash = pkgs.lib.fakeHash;
+      hash = "sha256-2rUJSk4inRR3M/DWSyTiKT1JmSJ5DoUx6Mw2qWU5+LY=";
     };
 
-    cargoHash = pkgs.lib.fakeHash;
+    cargoHash = "sha256-ywn7hFJNUGp4tLaEDHPjnXHEYc5MZU0uuDRAFZmPfN4=";
 
     cargoBuildFlags = [
       "-p"
@@ -87,7 +87,6 @@ in
     }
   ];
 
-
   environment.systemPackages = [
     northbound-server
     truenorth
@@ -151,7 +150,7 @@ in
       TRUENORTH_RPC_URL = "http://127.0.0.1:9554";
       TRUENORTH_RPC_COOKIE_PATH = "/var/lib/truenorth/.cookie";
       TRUENORTH_INDEX_DATABASE = "/var/lib/northbound/chain.sqlite";
-      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "100";
+      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "500";
     };
 
     serviceConfig = {
@@ -165,6 +164,8 @@ in
       RestartSec = 5;
     };
   };
+
+  services.amazon-ssm-agent.enable = true;
 
   services.caddy = {
     enable = true;

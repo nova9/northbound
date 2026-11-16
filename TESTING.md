@@ -2,6 +2,44 @@
 
 Use the same layout in every workspace crate.
 
+## API load testing with k6
+
+Install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) (`brew install k6`
+on macOS). The script targets `https://api.northboundwallet.org`. Run:
+
+```sh
+./scripts/load-api.sh
+```
+
+The launcher enables the live dashboard and opens it automatically in your browser
+at `http://localhost:5665`.
+
+The test cycles through chain-height GET, fee-estimate GET, and transaction-history
+POST requests at 50 requests/second total (about 16.7 per endpoint)
+for ten minutes, with at most 30 requests in flight. The extra workers provide
+headroom for connection setup and latency spikes without increasing the request
+rate. It checks readiness before and
+after the load. During the load, HTTP 503 responses count as failed requests but
+do not stop the test. Other non-200 responses (including 429), timeouts, or invalid
+response data abort the test. History requests query all three addresses hardcoded in the script
+together, requesting the first page of up to 100 transactions without following
+pagination. It fails if any endpoint's p95 exceeds one second or the generator
+drops iterations because its concurrency cap is too low. These are client-side
+measurements, including network latency; dropped iterations indicate the requested
+rate was not sustained. This test exercises indexed history queries but does not
+sign or broadcast transactions.
+
+To repeat the bounded production run while watching CloudWatch:
+
+```sh
+RATE=50 MAX_VUS=30 \
+  ./scripts/load-api.sh --summary-export=/tmp/northbound-k6-summary.json
+```
+
+Press Ctrl-C to stop early. `RATE` and `MAX_VUS` override the defaults above.
+The URL and ten-minute duration are hardcoded in `scripts/load-api.js`. The normal server
+budget is 100 requests/second shared with all users; keep production load below it.
+
 ## Unit tests
 
 Put unit tests at the bottom of the implementation file in an inline module:
