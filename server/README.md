@@ -127,14 +127,17 @@ Other settings remain `TRUENORTH_NETWORK` (`regtest` or `main`),
 `TRUENORTH_RPC_URL`, `TRUENORTH_RPC_COOKIE_PATH`, and `TRUENORTH_SERVER_BIND`.
 `TRUENORTH_INDEX_POLL_SECONDS` defaults to 2 and accepts 1–10 in server mode.
 
-Container deployments should mount persistent writable storage and set
-`TRUENORTH_INDEX_DATABASE` there. The image defaults to
-`/home/northbound/indexer/chain.sqlite`. Use one server replica per database on a
-local filesystem; the writer lock does not provide a distributed deployment mode.
-The Kubernetes example mounts a separate index PVC and probes `/ready`; its 5 GiB
-claim is an example size, not a capacity guarantee. The NixOS service uses an
-owned `/var/lib/northbound` state directory. Deployment image/source pins remain
-managed independently and must be updated when deploying the new implementation.
+The [NixOS configuration](devops/app.nix) runs the server and daemon as systemd
+services and configures Caddy for HTTPS. The server stores its index in an owned
+`/var/lib/northbound` state directory; the daemon stores its chain in
+`/var/lib/truenorth`. Use one server process per database on a local filesystem;
+the writer lock does not provide a distributed deployment mode. Use `/ready`
+to check index readiness.
+
+Before deployment, select the server source revision, replace the placeholder
+source and Cargo hashes, and adjust the domain, IP address, and host settings.
+The module manages deployment versions independently of local development.
+Daemon RPC stays on loopback, with cookie access granted to the server's user.
 
 Run the complete HTTP integration test with an isolated node and database:
 

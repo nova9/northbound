@@ -50,6 +50,19 @@ See [SECURITY.md](SECURITY.md) for the current security boundary and
 [ROADMAP.md](ROADMAP.md) for the planned move toward Electrum-style local
 verification.
 
+## Public server
+
+An independent community server for **TrueNorth mainnet** is available at
+[https://northbound.tncoin.xyz](https://northbound.tncoin.xyz), operated by
+[Ironfist-2000](https://github.com/Ironfist-2000).
+See the [server announcement](https://github.com/nova9/northbound/issues/2#issuecomment-6887701339)
+for details.
+
+To connect, open **Security → Server** in the wallet, enter
+`https://northbound.tncoin.xyz` as the **Server URL**, and save.
+The [server trust considerations](#security-and-server-trust) above apply to
+this server as well.
+
 ## Repository structure
 
 | Directory | Purpose |
@@ -131,8 +144,8 @@ To download another release without changing the project's selected version:
 ```
 
 Versions with a `v` prefix are also accepted. Update `TRUENORTH_VERSION` to select
-which release the development and integration scripts use. Deployment versions
-under `server/devops/` are managed independently.
+which release the development and integration scripts use. NixOS deployment
+versions in [`server/devops/app.nix`](server/devops/app.nix) are managed independently.
 See [test conventions and commands](TESTING.md) for the shared unit-test layout
 and isolated wallet, indexer, and server regtest suites.
 
@@ -201,19 +214,17 @@ NORTHBOUND_API_BASE_URL="https://wallet-api.example.com" \
   cargo build -p wallet --release --no-default-features --features mainnet
 ```
 
-## Container images
+## Server deployment
 
-Build and publish Docker images after setting `DOCKERHUB_REPOSITORY`:
+Server deployment uses NixOS. The configuration in
+[`server/devops/app.nix`](server/devops/app.nix) builds the server and installs
+TrueNorth Core, runs both as systemd services, and configures Caddy for HTTPS.
+The chain and index persist in `/var/lib/truenorth` and `/var/lib/northbound`.
 
-```bash
-./scripts/build-image.sh server [version]
-./scripts/build-image.sh truenorthd
-```
-
-The server version defaults to its Cargo package version, including workspace
-inheritance; the daemon version comes from `server/devops/truenorthd/VERSION.txt`.
-Both commands push the built image.
-`APP_SLUG` and `DOCKER_PLATFORMS` remain available as environment overrides.
+Before importing the module into a NixOS host configuration, select the server
+source revision, replace the placeholder source and Cargo hashes, and adjust
+the domain, IP address, and host settings. Keep the daemon RPC on loopback;
+the server reads its local authentication cookie.
 
 ## Project status
 
