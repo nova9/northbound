@@ -3,9 +3,12 @@ use std::time::Duration;
 use truenorth_rpc::NodeClient;
 
 use crate::{
-    Error, IndexDatabase, MempoolCache, Result, SyncProgress, refresh_mempool,
+    Error, IndexDatabase, MempoolCache, MempoolProgress, Result, SyncProgress, refresh_mempool,
     synchronize_next_block,
 };
+
+const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 pub async fn run_worker(
     node: &NodeClient,
@@ -14,26 +17,34 @@ pub async fn run_worker(
     once: bool,
 ) -> Result<()> {
     let mut cache = MempoolCache::new();
-    let mut failures = 0_u32;
+    let mut retry_delay = INITIAL_RETRY_DELAY;
     loop {
         let attempt = async {
             let progress = synchronize_next_block(node, database).await?;
-            if matches!(progress, SyncProgress::CaughtUp(_)) {
-                refresh_mempool(node, database, &mut cache).await?;
-            }
-            Ok(progress)
+            let mempool_progress = if matches!(progress, SyncProgress::CaughtUp(_)) {
+                Some(refresh_mempool(node, database, &mut cache).await?)
+            } else {
+                None
+            };
+            Ok((progress, mempool_progress))
         }
         .await;
-        let progress = match attempt {
-            Ok(progress) => {
-                failures = 0;
-                progress
+
+        let (progress, mempool_progress) = match attempt {
+            Ok(outcomes) => {
+                retry_delay = INITIAL_RETRY_DELAY;
+                outcomes
             }
-            Err(Error::Rpc(message)) if failures < 5 => {
+            Err(Error::Rpc(message)) => {
                 database.mark_unavailable()?;
-                failures += 1;
-                eprintln!("Node contact failed; index unavailable: {message}");
-                tokio::time::sleep(Duration::from_secs(1_u64 << failures)).await;
+
+                eprintln!(
+                    "Node contact failed; index unavailable. Retrying in {} seconds: {message}",
+                    retry_delay.as_secs()
+                );
+
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2).min(MAX_RETRY_DELAY);
                 continue;
             }
             Err(error) => {
@@ -41,6 +52,12 @@ pub async fn run_worker(
                 return Err(error);
             }
         };
+
+        if matches!(mempool_progress, Some(MempoolProgress::ChangedDuringRead)) {
+            tokio::time::sleep(poll).await;
+            continue;
+        }
+
         match progress {
             SyncProgress::Applied(tip) => {
                 println!("Indexed {} {}", tip.height, hex::encode(tip.hash))

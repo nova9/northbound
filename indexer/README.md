@@ -69,8 +69,11 @@ its own write transactions, but the sidecar lock coordinates indexer processes,
 not arbitrary SQL clients.
 
 RPC calls time out after 30 seconds and responses are bounded to 64 MiB. During
-synchronization, RPC errors trigger five retries with exponential delays capped
-at 32 seconds, then stop the command. Startup errors stop immediately. Neither
+synchronization, RPC errors mark the index unavailable and are retried indefinitely,
+including with `--once`. Delays start at two seconds and double up to thirty
+seconds, resetting after a successful attempt. Chain or mempool changes during
+capture are retried by the worker after the normal polling interval. Startup
+errors stop immediately. Neither
 path fabricates empty data or advances progress after a failed RPC. Decode,
 identity, and database errors stop immediately. A missing historical block
 must be made available before retrying; pruned nodes are rejected.
