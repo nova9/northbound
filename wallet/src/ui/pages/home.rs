@@ -38,8 +38,7 @@ pub(crate) fn Home() -> Element {
             let addresses = wallet.tracked_addresses();
             let current_address = wallet
                 .receiving_addresses()
-                .ok()
-                .and_then(|mut addresses| addresses.pop());
+                .map(|mut addresses| addresses.pop());
 
             (addresses, current_address)
         })
@@ -137,11 +136,17 @@ pub(crate) fn Home() -> Element {
                             "Manage addresses"
                         }
                     }
-                    if let Some(address) = current_address {
-                        code { class: "overview-address", "{address.address}" }
-                        p { class: "address-caption", "Address {address.index} · Ready to receive" }
-                    } else {
-                        p { class: "empty-copy", "Create your first address before receiving {CURRENCY_TICKER}." }
+                    match current_address {
+                        Ok(Some(address)) => rsx! {
+                            code { class: "overview-address", "{address.address}" }
+                            p { class: "address-caption", "Address {address.index} · Ready to receive" }
+                        },
+                        Ok(None) => rsx! {
+                            p { class: "empty-copy", "Create your first address before receiving {CURRENCY_TICKER}." }
+                        },
+                        Err(message) => rsx! {
+                            p { class: "error-message", role: "alert", "Could not load receiving address: {message}" }
+                        },
                     }
                 }
             }
