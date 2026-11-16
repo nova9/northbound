@@ -21,7 +21,7 @@ broadcasts transactions that have already been signed by the wallet.
 > audit. Do not use it with significant funds.
 
 <p align="center">
-  <img src="website/assets/image.png" alt="Northbound welcome screen, with options to create or restore a wallet and guidance for backing up recovery words." width="1000">
+  <img src="website/assets/wallet-welcome.png" alt="Northbound welcome screen, with options to create or restore a wallet and guidance for backing up recovery words." width="1000">
 </p>
 
 ## Current capabilities
