@@ -2,10 +2,17 @@ use dioxus::desktop::muda::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_icon = dioxus::desktop::icon_from_memory(include_bytes!("../icons/icon.png"))?;
+    // Allow more vertical space for Linux's in-window menu and font metrics.
+    let window_height = if cfg!(target_os = "linux") {
+        720.0
+    } else {
+        640.0
+    };
     let window = dioxus::desktop::WindowBuilder::new()
+        .with_title("Northbound")
         .with_window_icon(Some(window_icon))
-        .with_inner_size(dioxus::desktop::LogicalSize::new(1080.0, 640.0))
-        .with_min_inner_size(dioxus::desktop::LogicalSize::new(1080.0, 640.0))
+        .with_inner_size(dioxus::desktop::LogicalSize::new(1080.0, window_height))
+        .with_resizable(false)
         .with_always_on_top(false);
 
     #[cfg(target_os = "macos")]
@@ -68,17 +75,26 @@ fn create_menu_bar() -> Result<Menu, Box<dyn std::error::Error>> {
             &PredefinedMenuItem::select_all(None),
         ],
     )?;
-    let window_menu = Submenu::with_items(
-        "Window",
-        true,
-        &[
-            &PredefinedMenuItem::fullscreen(None),
-            &PredefinedMenuItem::maximize(None),
-            &PredefinedMenuItem::minimize(None),
-            &PredefinedMenuItem::close_window(None),
-        ],
-    )?;
-    let menu = Menu::with_items(&[&application_menu, &edit_menu, &window_menu])?;
+    let menu = Menu::with_items(&[&application_menu, &edit_menu])?;
+
+    // Muda's predefined window actions are unsupported on Linux.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let window_menu = Submenu::with_items(
+            "Window",
+            true,
+            &[
+                &PredefinedMenuItem::fullscreen(None),
+                &PredefinedMenuItem::maximize(None),
+                &PredefinedMenuItem::minimize(None),
+                &PredefinedMenuItem::close_window(None),
+            ],
+        )?;
+        menu.append(&window_menu)?;
+
+        #[cfg(target_os = "macos")]
+        window_menu.set_as_windows_menu_for_nsapp();
+    }
 
     #[cfg(debug_assertions)]
     {
@@ -107,9 +123,6 @@ fn create_menu_bar() -> Result<Menu, Box<dyn std::error::Error>> {
         #[cfg(target_os = "macos")]
         help_menu.set_as_help_menu_for_nsapp();
     }
-
-    #[cfg(target_os = "macos")]
-    window_menu.set_as_windows_menu_for_nsapp();
 
     Ok(menu)
 }
