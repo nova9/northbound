@@ -9,10 +9,12 @@ axum = "0.8.9"
 indexer = { path = "../indexer" }
 truenorth-rpc = { path = "../truenorth-rpc" }
 shared = { path = "../shared" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["fs", "macros", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]
+tokio = { version = "1.54.1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-serde_json = "1.0.154"
 reqwest = { version = "0.13.5", features = ["json"] }
 tempfile = "3.27.0"

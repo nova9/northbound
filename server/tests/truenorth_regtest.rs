@@ -26,10 +26,12 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     let url = format!("http://{bind}");
     let cookie =
         PathBuf::from(env::var_os("TRUENORTH_TEST_DATA_DIR").unwrap()).join("regtest/.cookie");
-    let spawn_server = || {
+    let spawn_server = |mining_enabled: bool| {
         ServerProcess(
             Command::new(env!("CARGO_BIN_EXE_server"))
                 .env("TRUENORTH_NETWORK", "regtest")
+                .env("TRUENORTH_MINING_ENABLED", mining_enabled.to_string())
+                .env("TRUENORTH_MINING_REQUESTS_PER_SECOND", "100")
                 .env(
                     "TRUENORTH_RPC_URL",
                     format!(
@@ -50,11 +52,23 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
                 .unwrap(),
         )
     };
-    let mut server = spawn_server();
+    let mut server = spawn_server(false);
     let client = Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
         .unwrap();
+    wait_ready(&client, &url, 0).await;
+    assert_eq!(
+        client
+            .get(format!("{url}/v1/mining/template"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    drop(server);
+    server = spawn_server(true);
     wait_ready(&client, &url, 0).await;
 
     for script in [
@@ -142,6 +156,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         "fee_rate=1",
     ]);
     let pending = wait_history(&client, &url, &addresses, &payment, 0).await;
+    support::mining::wait_template_transaction(&client, &url, &payment).await;
     assert_eq!(pending.transactions[0].net_amount, 100_000_000);
     // A pending snapshot change invalidates cursors even without a new block.
     assert_eq!(
@@ -420,7 +435,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     );
 
     drop(server);
-    server = spawn_server();
+    server = spawn_server(true);
     wait_ready(&client, &url, 105).await;
     let resumed = wait_history(&client, &url, &addresses, &replacement, 2).await;
     assert_eq!(
@@ -432,6 +447,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         1
     );
 
+    support::mining::exercise_mining_api(&client, &url).await;
     run_cli(&["stop"]);
     for _ in 0..200 {
         if client
@@ -445,6 +461,7 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
             let response = post(&client, &url, "/v1/utxos", json!({"addresses": addresses})).await;
             assert_eq!(response.status(), 503);
             assert!(response.json::<Value>().await.unwrap()["message"].is_string());
+            support::mining::wait_unavailable(&client, &url).await;
             drop(server);
             return;
         }

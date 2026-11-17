@@ -1,5 +1,8 @@
 # Indexed wallet API
 
+An optional, separately limited [solo-mining API](MINING.md) provides templates,
+long polling, block-hash lookup, and completed block submission. It is disabled by default.
+
 Start the daemon, then run the server:
 
 ```sh

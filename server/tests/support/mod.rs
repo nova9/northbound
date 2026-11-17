@@ -6,6 +6,8 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use shared::{IndexStatus, TransactionHistory};
 
+pub mod mining;
+
 pub struct ServerProcess(pub Child);
 
 impl Drop for ServerProcess {

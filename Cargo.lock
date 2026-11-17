@@ -4857,6 +4857,7 @@ dependencies = [
  "axum",
  "indexer",
  "reqwest",
+ "serde",
  "serde_json",
  "shared",
  "tempfile",

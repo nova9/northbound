@@ -17,7 +17,7 @@ pub(crate) async fn format_response(mut response: Response) -> Response {
                 "Request must contain valid JSON with the required fields."
             }
             StatusCode::UNSUPPORTED_MEDIA_TYPE => "Request must use application/json.",
-            StatusCode::PAYLOAD_TOO_LARGE => "Request exceeds the 1 MB body limit.",
+            StatusCode::PAYLOAD_TOO_LARGE => "Request exceeds the configured body limit.",
             _ => "Request could not be served.",
         };
         response = (

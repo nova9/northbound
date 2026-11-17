@@ -1,6 +1,7 @@
 mod api;
 pub mod config;
 mod error;
+pub mod mining;
 mod node_routes;
 mod rate_limit;
 

@@ -129,6 +129,17 @@ impl NodeClient {
     }
 
     pub(crate) async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
+        let result = self.call_rpc_allow_null(method, params).await?;
+        if result.is_null() {
+            return Err(Error::InvalidData(format!(
+                "{method} returned a null result"
+            )));
+        }
+        Ok(result)
+    }
+
+    // submitblock reports successful validation with a null result.
+    pub(crate) async fn call_rpc_allow_null(&self, method: &str, params: Value) -> Result<Value> {
         // Read for every call so daemon cookie rotation does not require restart.
         let cookie = tokio::fs::read_to_string(&self.cookie_path).await?;
         let (username, password) = cookie
@@ -183,11 +194,6 @@ impl NodeClient {
         let result = response
             .get_mut("result")
             .ok_or_else(|| Error::InvalidData(format!("{method} response has no result")))?;
-        if result.is_null() {
-            return Err(Error::InvalidData(format!(
-                "{method} returned a null result"
-            )));
-        }
         Ok(result.take())
     }
 }
