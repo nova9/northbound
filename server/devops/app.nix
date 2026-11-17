@@ -3,16 +3,16 @@
 let
   northbound-server = pkgs.rustPlatform.buildRustPackage {
     pname = "northbound-server";
-    version = "0.1.0";
+    version = "0.2.0-alpha.2";
 
     src = pkgs.fetchFromGitHub {
       owner = "nova9";
       repo = "northbound";
-      rev = "66fa1d91444185a60c8273a7b8dc20d2d3ee130b";
-      hash = "sha256-2rUJSk4inRR3M/DWSyTiKT1JmSJ5DoUx6Mw2qWU5+LY=";
+      rev = "6cca3a6d3abc36f894aa68a74c98c2d7ccc1b170";
+      hash = "sha256-zy89QA5FAxfiWe3CawKqZrXWhwGvZ2qsPSm4XdwZRy8=";
     };
 
-    cargoHash = "sha256-ywn7hFJNUGp4tLaEDHPjnXHEYc5MZU0uuDRAFZmPfN4=";
+    cargoHash = "sha256-8Px6KTw5Chbtpmm06BoCd01JRU6eHtbYrsilkA+mk+w=";
 
     cargoBuildFlags = [
       "-p"
@@ -129,7 +129,7 @@ in
       User = "truenorth";
       Group = "truenorth";
 
-      ExecStart = "${truenorth}/bin/truenorthd -datadir=/var/lib/truenorth -printtoconsole -server=1 -rpcbind=127.0.0.1 -rpcallowip=127.0.0.1 -rpccookiefile=/var/lib/truenorth/.cookie -rpccookieperms=group -blockfilterindex=1 -txindex=1";
+      ExecStart = "${truenorth}/bin/truenorthd -chain=main -datadir=/var/lib/truenorth -printtoconsole -server=1 -prune=0 -rpcbind=127.0.0.1 -rpcallowip=127.0.0.1 -rpccookiefile=/var/lib/truenorth/.cookie -rpccookieperms=group -blockfilterindex=1 -txindex=1";
 
       Restart = "on-failure";
       RestartSec = 10;
@@ -150,7 +150,9 @@ in
       TRUENORTH_RPC_URL = "http://127.0.0.1:9554";
       TRUENORTH_RPC_COOKIE_PATH = "/var/lib/truenorth/.cookie";
       TRUENORTH_INDEX_DATABASE = "/var/lib/northbound/chain.sqlite";
-      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "500";
+      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "300";
+      TRUENORTH_MINING_ENABLED = "true";
+      TRUENORTH_MINING_REQUESTS_PER_SECOND = "100";
     };
 
     serviceConfig = {
