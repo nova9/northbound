@@ -5,6 +5,7 @@ pub const COINBASE_MATURITY_CONFIRMATIONS: u64 = 100;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerInfo {
     pub version: String,
+    pub network: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -140,11 +141,24 @@ pub struct TransactionStatusRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionStatusResponse {
     pub known: bool,
+    pub block_height: Option<u64>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::ChainTip;
+
+    #[test]
+    fn status_accepts_older_servers_and_serializes_null_pending_height() {
+        let status: super::TransactionStatusResponse =
+            serde_json::from_str(r#"{"known":true}"#).unwrap();
+        assert!(status.known);
+        assert_eq!(status.block_height, None);
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            serde_json::json!({"known": true, "block_height": null})
+        );
+    }
 
     #[test]
     fn chain_tip_uses_the_expected_json_format() {

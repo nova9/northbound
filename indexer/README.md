@@ -184,9 +184,11 @@ SQLite tests cover same-block parent/child spends, all-or-nothing failed writes,
 abrupt exits before and after commit, exclusive writer ownership, reader snapshot
 consistency, malformed data, duplicate IDs, and invalid spends.
 
-The server regtest test runs with `blockfilterindex=0` and no `txindex`, exercising
-pending receives, parent/child spends, RBF eviction, confirmation, reorganization,
-pagination invalidation, restart, and node failure through HTTP endpoints.
+The server regtest command automatically runs with `blockfilterindex=0` and daemon
+`txindex` first disabled, then enabled, on separate temporary chains. Both runs
+exercise pending receives, parent/child spends, RBF eviction, confirmation,
+reorganization, pagination invalidation, restart, and node failure through HTTP
+endpoints. The enabled run also verifies confirmed and unknown daemon lookups.
 
 Consensus-specific constants were checked against TrueNorth **v30.5.4** source:
 

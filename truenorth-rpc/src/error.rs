@@ -3,7 +3,11 @@ use std::fmt;
 #[derive(Debug)]
 pub enum Error {
     Transport(String),
-    Remote { method: String, code: i64 },
+    Remote {
+        method: String,
+        code: i64,
+        message: String,
+    },
     InvalidData(String),
     Io(std::io::Error),
 }
@@ -14,7 +18,7 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(message) => write!(formatter, "TrueNorth RPC: {message}"),
-            Self::Remote { method, code } => {
+            Self::Remote { method, code, .. } => {
                 write!(formatter, "TrueNorth RPC {method} failed with code {code}")
             }
             Self::InvalidData(message) => write!(formatter, "invalid RPC data: {message}"),

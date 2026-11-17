@@ -1,90 +1,81 @@
-# Northbound 0.2.0-alpha.2
+# Northbound 0.2.0-alpha.3
 
-Changes since `v0.2.0-alpha.1`.
+Changes since `v0.2.0-alpha.2`.
 
-Mining rewards now have their own history label and an immature status. Server
-operators can optionally enable a solo-mining API for external miners.
+This release improves transaction broadcast errors, confirmation lookups, and
+server network discovery. It also fixes a node shutdown error that could stop
+the API server.
 
 ## API changes
 
-### Transaction history: new `coinbase` field
+### Actionable broadcast responses
 
-`POST /v1/transactions` adds a boolean `coinbase` field to each transaction:
+`POST /v1/transactions/broadcast` keeps its existing request and success formats.
 
-```json
-{
-  "transaction_id": "<transaction ID>",
-  "net_amount": 51200000000,
-  "network_fee": null,
-  "coinbase": true,
-  "block_height": 12345,
-  "confirmations": 68,
-  "timestamp": 1794787200
-}
-```
+- Transaction refusals return HTTP 400 with the node's rejection reason.
+- Missing/spent inputs and applicable mempool conflicts return HTTP 409 with the
+  node's rejection reason.
+- Repeated broadcasts of accepted transactions return HTTP 200 with their exact
+  transaction ID, while pending or confirmed. Confirmed transactions whose
+  outputs are all spent are recognized through the server index.
+- Unreachable nodes, malformed responses, and unrelated RPC errors remain HTTP
+  502 with a generic message. An unavailable index during the spent-output
+  repeat check returns HTTP 503.
 
-- `true` identifies a mining reward; `false` identifies a normal transaction.
-- Amounts remain integer atomic units. The example represents 512 NORTH.
-- `network_fee` remains null for mining rewards.
-- Existing request formats, pagination, and amount/fee meanings are unchanged.
-- API clients with strict response schemas must allow the new field.
+Error bodies remain `{"message":"..."}`. After a broadcast error, check the
+transaction status before treating the payment as failed or sending it again.
 
-**Upgrade the server as well as the wallet to see mining labels.** An older
-server omits `coinbase`; the new wallet still loads its history but displays
-those rewards using the ordinary transaction labels. It does not infer mining
-rewards from the amount or a null fee.
+### Confirmation height in transaction status
 
-### New optional solo-mining endpoints
+`POST /v1/transactions/status` adds nullable `block_height` alongside `known`:
 
-| Method and path | Behavior |
+| State | Response |
 | --- | --- |
-| `GET /v1/mining/template` | Returns the complete node-generated block template. |
-| `GET /v1/mining/template?longpollid=...` | Waits for a changed template identifier, for at most 25 seconds. |
-| `GET /v1/mining/block-hash?height=...` | Returns `{"height":...,"hash":"..."}` from the node's active chain. |
-| `POST /v1/mining/blocks` | Accepts `{"block_hex":"..."}` and submits the completed block to the node. |
+| Unknown | `{"known":false,"block_height":null}` |
+| Pending | `{"known":true,"block_height":null}` |
+| Confirmed | `{"known":true,"block_height":120}` |
 
-These routes are **disabled by default** and return 404 until enabled:
+The lookup works independently of history pagination and unspent change outputs.
+It checks the server index first, then falls back to the daemon. A failed lookup
+returns an HTTP error rather than claiming the transaction is unknown. The daemon
+fallback needs a synced `txindex` for historical lookups; locally indexed
+transactions do not require it. An unknown result alone does not establish that
+an earlier broadcast failed.
 
-```sh
-TRUENORTH_MINING_ENABLED=true cargo run -p server --release
-```
+### Network identity in server info
 
-The example enables mining; retain the network, RPC, and database environment
-settings for your deployment. `TRUENORTH_MINING_REQUESTS_PER_SECOND` controls a
-separate mining request budget, defaulting to 100 requests/second.
-
-Templates share one upstream watcher and cache. Long-poll clients should use an
-HTTP timeout longer than 25 seconds and reconnect after every response. A timeout
-can return the same template identifier. Missing or stale work returns 503.
-
-Block submission returns `status` and the original node `result`:
+`GET /info` now returns the server's configured network alongside its version:
 
 ```json
-{"status":"accepted","result":null}
+{"version":"0.2.0-alpha.3","network":"main"}
 ```
 
-**HTTP 200 does not always mean the block was accepted.** Inspect `status`, which
-can also be `duplicate`, `rejected`, or `inconclusive`. Invalid requests, rate
-exhaustion, capacity limits, and upstream failures use HTTP error responses.
+`network` is `main` or `regtest`, checked against the daemon at startup. This
+endpoint remains available without a live node or ready index. The chain-tip
+response remains height-only: `{"height":120}`.
 
-This is solo mining: the miner constructs its reward transaction and mines
-locally. The server does not distribute pool payouts or receive wallet secrets.
-See [the mining API contract](server/MINING.md) for limits, errors, and examples.
+Clients with strict response schemas must allow the added `network` and
+`block_height` fields. Clients supporting older servers should tolerate their
+absence. See [the API documentation](server/README.md) for the full contract.
 
-## Wallet changes
+## Wallet behavior
 
-- Mining rewards appear as **Mining reward** in history.
-- Rewards below 100 confirmations show **Immature**, with an explanation that
-  they are excluded from available balance until maturity.
-- Mature rewards show **Confirmed**. The existing spendability rule is unchanged.
-- Improve Linux window/menu behavior and overview balance error display.
+- Broadcast rejection reasons remain visible to the user.
+- The wallet retains status checks after broadcast errors: a known transaction
+  is treated as sent; unknown or failed checks leave the outcome uncertain.
+- Transactions are not automatically retried. Older status responses without
+  `block_height` remain readable.
 
 ## Server and development changes
 
-- Consolidate indexer retry handling.
-- Add `scripts/mainnet.sh` with `start`, `stop`, `tip`, and `peers` commands.
-  Mainnet and regtest daemon chain data use separate network directories;
-  configure a separate mainnet API index database explicitly.
-- Add k6 API load-testing tooling and isolated mining API regtest coverage.
-- Remove the repository's Docker/Kubernetes deployment examples. NixOS deployment
-  remains documented in [the server README](server/README.md).
+- Preserve structured RPC errors, including method, numeric code, and message,
+  even on unsuccessful HTTP responses. Only broadcast rejection reasons are
+  exposed publicly.
+- Treat non-JSON HTTP failures as transport errors so the indexer uses its
+  existing retry path during node shutdown or overload. Malformed successful
+  responses remain invalid-data errors.
+- Verify that mining rewards retain the existing history `coinbase` flag after
+  their outputs are spent.
+- Extend isolated regtest coverage for repeated broadcasts, conflicting spends,
+  confirmation heights, and payments without change. The server integration
+  command automatically tests with daemon `txindex` both disabled and enabled.

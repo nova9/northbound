@@ -158,12 +158,7 @@ impl NodeClient {
             .map_err(|_| {
                 Error::Transport(format!("{method} request failed; check node availability"))
             })?;
-        if !response.status().is_success() {
-            return Err(Error::Transport(format!(
-                "{method} returned HTTP {}",
-                response.status()
-            )));
-        }
+        let http_status = response.status();
         let mut bytes = Vec::new();
         while let Some(chunk) = response
             .chunk()
@@ -175,8 +170,21 @@ impl NodeClient {
             }
             bytes.extend_from_slice(&chunk);
         }
-        let mut response: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::InvalidData(format!("{method} returned invalid JSON")))?;
+        let mut response: Value = match serde_json::from_slice(&bytes) {
+            Ok(response) => response,
+            // Shutdown and overload can return plain HTTP errors without JSON-RPC.
+            // Keep these retryable by the indexer, which retries transport failures.
+            Err(_) if !http_status.is_success() => {
+                return Err(Error::Transport(format!(
+                    "{method} returned HTTP {http_status}"
+                )));
+            }
+            Err(_) => {
+                return Err(Error::InvalidData(format!(
+                    "{method} returned invalid JSON"
+                )));
+            }
+        };
         if response["id"] != "northbound" || response["jsonrpc"] != "2.0" {
             return Err(Error::InvalidData(
                 "RPC response ID or version does not match the request".into(),
@@ -189,7 +197,16 @@ impl NodeClient {
             return Err(Error::Remote {
                 method: method.into(),
                 code,
+                message: response["error"]["message"]
+                    .as_str()
+                    .ok_or_else(|| Error::InvalidData("RPC error has no message".into()))?
+                    .to_owned(),
             });
+        }
+        if !http_status.is_success() {
+            return Err(Error::Transport(format!(
+                "{method} returned HTTP {http_status}"
+            )));
         }
         let result = response
             .get_mut("result")

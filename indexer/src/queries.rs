@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags, Transaction, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use shared::IndexStatus;
 
 use crate::address::ScriptAddress;
@@ -93,13 +93,28 @@ impl ReadSnapshot<'_> {
         Ok(addresses)
     }
 
-    pub fn query_transaction_known(&self, txid: &[u8; 32]) -> Result<bool> {
-        Ok(self.database.query_row(
-            "SELECT EXISTS (SELECT 1 FROM transactions WHERE txid = ?1)
-                OR EXISTS (SELECT 1 FROM mempool_transactions WHERE txid = ?1)",
+    pub fn query_transaction_status(
+        &self,
+        txid: &[u8; 32],
+    ) -> Result<shared::TransactionStatusResponse> {
+        let confirmed_height = self
+            .database
+            .query_row(
+                "SELECT b.height FROM transactions t JOIN blocks b ON b.hash = t.block_hash
+             WHERE t.txid = ?1",
+                [txid.as_slice()],
+                |row| read_u64(row, 0),
+            )
+            .optional()?;
+        let pending: bool = self.database.query_row(
+            "SELECT EXISTS (SELECT 1 FROM mempool_transactions WHERE txid = ?1)",
             [txid.as_slice()],
             |row| row.get(0),
-        )?)
+        )?;
+        Ok(shared::TransactionStatusResponse {
+            known: confirmed_height.is_some() || pending,
+            block_height: confirmed_height,
+        })
     }
 }
 
@@ -147,6 +162,78 @@ mod tests {
             .database
             .publish_mempool_snapshot(&base, sequence, &[])
             .unwrap();
+    }
+
+    #[test]
+    fn transaction_status_survives_confirmation_and_rollback_without_outputs_or_history() {
+        let mut fixture = Fixture::new(100);
+        ready(&mut fixture, 1);
+        let mut reader = IndexReader::open(&fixture.path(), "regtest").unwrap();
+        let id = hash(2000);
+        let unknown = reader
+            .read_snapshot(&[])
+            .unwrap()
+            .query_transaction_status(&id)
+            .unwrap();
+        assert!(!unknown.known);
+        assert_eq!(unknown.block_height, None);
+        let payment =
+            truenorth_rpc::decode_transaction(&payment(2000, 1001, "511.99999837").to_string())
+                .unwrap();
+        let base = fixture.database.tip().unwrap().unwrap();
+        fixture
+            .database
+            .publish_mempool_snapshot(&base, 2, &[payment.clone()])
+            .unwrap();
+        let pending_snapshot = reader.read_snapshot(&[]).unwrap();
+        let pending = pending_snapshot.query_transaction_status(&id).unwrap();
+        assert!(pending.known);
+        assert_eq!(pending.block_height, None);
+        let mut confirmed_block = block(101, 0, vec![]);
+        confirmed_block.transactions.push(payment.clone());
+        fixture.database.apply_block(&confirmed_block).unwrap();
+        assert_eq!(
+            pending_snapshot
+                .query_transaction_status(&id)
+                .unwrap()
+                .block_height,
+            None
+        );
+        drop(pending_snapshot);
+        ready(&mut fixture, 3);
+        let confirmed = reader
+            .read_snapshot(&[])
+            .unwrap()
+            .query_transaction_status(&id)
+            .unwrap();
+        assert!(confirmed.known);
+        assert_eq!(confirmed.block_height, Some(101));
+        let tip = fixture.database.tip().unwrap().unwrap();
+        fixture.database.rollback_tip(&tip).unwrap();
+        assert!(matches!(
+            reader.read_snapshot(&[]),
+            Err(Error::Unavailable(_))
+        ));
+        fixture
+            .database
+            .publish_mempool_snapshot(&base, 4, &[payment])
+            .unwrap();
+        let pending = reader
+            .read_snapshot(&[])
+            .unwrap()
+            .query_transaction_status(&id)
+            .unwrap();
+        assert!(pending.known);
+        assert_eq!(pending.block_height, None);
+        ready(&mut fixture, 5);
+        assert!(
+            !reader
+                .read_snapshot(&[])
+                .unwrap()
+                .query_transaction_status(&id)
+                .unwrap()
+                .known
+        );
     }
 
     #[test]

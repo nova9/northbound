@@ -41,6 +41,37 @@ pub(crate) struct ApiError {
 }
 
 impl ApiError {
+    pub fn from_broadcast_error(error: truenorth_rpc::Error) -> Self {
+        if let truenorth_rpc::Error::Remote {
+            method,
+            code,
+            message,
+        } = &error
+        {
+            if method == "sendrawtransaction" {
+                // Only transaction rejection codes expose the daemon's reason.
+                let status = match code {
+                    -25 | -26
+                        if message == "bad-txns-inputs-missingorspent"
+                            || message == "txn-mempool-conflict" =>
+                    {
+                        Some(StatusCode::CONFLICT)
+                    }
+                    -22 | -25 | -26 => Some(StatusCode::BAD_REQUEST),
+                    -27 => Some(StatusCode::CONFLICT),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    return Self {
+                        status,
+                        message: message.clone(),
+                    };
+                }
+            }
+        }
+        Self::from(error)
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,

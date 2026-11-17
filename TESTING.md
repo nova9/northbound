@@ -107,7 +107,10 @@ Run the corresponding isolated harness:
 ```
 
 Each invocation starts a daemon with a unique temporary data directory, exports
-its connection settings, and removes the chain afterward. CLI helpers require
+its connection settings, and removes the chain afterward. The server command
+runs the complete scenario twice automatically: first with daemon `txindex`
+disabled, then enabled, on separate temporary chains. Both runs must pass;
+no environment switch or second command is needed. CLI helpers require
 `TRUENORTH_TEST_ISOLATED=1`; the marker is a guard, while the harness provides the
 actual isolation. Never point mining or invalidation tests at a user's node.
 

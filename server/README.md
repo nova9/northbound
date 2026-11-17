@@ -25,21 +25,68 @@ the server. Initial node/cookie failures prevent startup.
 
 | Endpoint | Source |
 |---|---|
-| `GET /info` | Server release version from Cargo |
+| `GET /info` | Server release version and configured network |
 | `POST /v1/utxos` | Paginated confirmed outputs, excluding current pending spends |
 | `POST /v1/addresses/activity` | Indexed confirmed and pending output history |
 | `POST /v1/transactions` | Indexed confirmed and pending history, paginated |
 | `POST /v1/transactions/status` | Index lookup, then daemon lookup if not yet observed |
-| `GET /v1/chain/tip` | Daemon height, preserving the existing meaning |
+| `GET /v1/chain/tip` | Validated daemon height |
 | `GET /v1/fees/estimate` | Daemon fee estimate and policy floors |
 | `GET /v2/fees/estimate` | Precise daemon fee estimate and policy floors in atomic units/kvB |
 | `POST /v1/transactions/validate` | Daemon mempool acceptance |
 | `POST /v1/transactions/broadcast` | Daemon broadcast |
 
-`GET /info` returns `{"version":"0.1.0"}` (using the running server's Cargo
-package version). Clients can check this before loading wallet data to identify
-supported server releases. It requires no node or index query and uses the normal
-API rate limit. A 404 from an older server means version discovery is unavailable.
+`GET /info` returns `{"version":"0.1.0","network":"main"}`. `version` uses the
+running server's Cargo package version; `network` is the configured `main` or
+`regtest` network, checked against the daemon at startup. Clients can check this
+before sending addresses or preparing a payment. It requires no node or index
+query and uses the normal API rate limit. A 404 from an older server means version
+discovery is unavailable; older responses may omit `network`.
+
+`GET /v1/chain/tip` returns `{"height":120}`. The daemon's network is still checked
+against server configuration on this request; a mismatch returns 502.
+
+`POST /v1/transactions/status` takes `{"transaction_id":"..."}` and returns:
+
+| State | `known` | `block_height` |
+|---|---|---|
+| Unknown | `false` | `null` |
+| Pending | `true` | `null` |
+| Confirmed | `true` | Height of the containing block |
+
+The lookup uses a fresh index snapshot, independent of history pagination and
+whether any transaction outputs remain unspent. If absent from the snapshot, it
+asks the daemon for the transaction and, when confirmed, its active block header.
+A missing or synchronizing index returns 503. A failed daemon lookup returns 502;
+without a synced daemon `txindex`, an absent mempool transaction cannot establish
+absence from the blockchain and also returns 502. This does not affect confirmed
+transactions already in the server index. Older servers omit `block_height`, so
+clients should tolerate its absence. Results describe the observed chain and may
+change after a reorganization.
+
+`POST /v1/transactions/broadcast` takes `{"transaction_hex":"..."}` and returns
+`{"transaction_id":"..."}` with HTTP 200 for accepted transactions, including
+repeated submissions while pending or confirmed. TrueNorth's already-confirmed
+code (-27) is success; the daemon decodes the submitted transaction to recover its
+exact ID. If all its outputs have been spent and the daemon instead reports
+missing inputs, the server checks that exact ID in the fresh confirmed index
+before reporting success. A conflicting transaction is never success.
+
+Broadcast error mapping (the JSON body remains `{"message":"..."}`):
+
+| Condition | HTTP status | Message |
+|---|---|---|
+| Invalid hex or malformed transaction (-22) | 400 | Input validation or node rejection reason |
+| Transaction refusal (-25, -26) | 400 | Node rejection reason |
+| Missing/spent inputs or mempool conflict | 409 | Node rejection reason |
+| Node unreachable, malformed response, unrelated RPC error | 502 | Generic upstream error |
+| Index unavailable during the spent-output repeat check | 503 | Index readiness error |
+
+Only `sendrawtransaction` rejection reasons are exposed; credentials and unrelated
+node infrastructure errors stay private. After any broadcast error, clients should
+check transaction status: `known: true` means it was sent. An unknown result or a
+failed status check leaves an ambiguous send unresolved. The desktop wallet keeps
+the rejection reason visible and never automatically retries the transaction.
 
 The first three requests take `addresses` (at most 100 per request). History also
 accepts optional `limit` (1–200) and `cursor`, and returns `next_cursor`.
@@ -81,6 +128,7 @@ the fee. `block_height` is null and confirmations are zero while pending;
 `coinbase` identifies mining rewards explicitly. The wallet labels these as
 "Mining reward" and shows "Immature" below 100 confirmations. Older servers omit
 this field, so update the server as well as the wallet to enable these labels.
+The flag remains on history entries after every reward output has been spent.
 
 Fetch every page of each disjoint address batch, group entries by transaction ID,
 and sum only `net_amount`. Keep matching transaction metadata and the fee once;

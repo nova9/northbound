@@ -4,6 +4,8 @@ mod error;
 pub mod mining;
 mod node_routes;
 mod rate_limit;
+#[cfg(test)]
+mod test_support;
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -75,35 +77,37 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn info_returns_package_version_without_a_node_or_index() {
-        let directory = tempfile::tempdir().unwrap();
-        let node = NodeClient::new(
-            "http://127.0.0.1:1",
-            directory.path().join("missing-cookie"),
-            "regtest",
-        )
-        .unwrap();
-        let state = Arc::new(AppState::new(
-            node,
-            directory.path().join("missing-index.sqlite"),
-            "regtest".into(),
-        ));
-        let router = build_router(state, NonZeroU32::new(100).unwrap());
-
-        let response = router
-            .oneshot(Request::get("/info").body(Body::empty()).unwrap())
-            .await
+    async fn info_returns_version_and_network_without_a_node_or_index() {
+        for network in ["main", "regtest"] {
+            let directory = tempfile::tempdir().unwrap();
+            let node = NodeClient::new(
+                "http://127.0.0.1:1",
+                directory.path().join("missing-cookie"),
+                network,
+            )
             .unwrap();
+            let state = Arc::new(AppState::new(
+                node,
+                directory.path().join("missing-index.sqlite"),
+                network.into(),
+            ));
+            let router = build_router(state, NonZeroU32::new(100).unwrap());
 
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()["content-type"], "application/json");
-        let body = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
-        let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            info,
-            serde_json::json!({"version": env!("CARGO_PKG_VERSION")})
-        );
+            let response = router
+                .oneshot(Request::get("/info").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], "application/json");
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                info,
+                serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "network": network})
+            );
+        }
     }
 }

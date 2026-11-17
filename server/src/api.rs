@@ -9,9 +9,10 @@ use shared::{
 
 use crate::{AppState, error::ApiError};
 
-pub(crate) async fn server_info() -> Json<ServerInfo> {
+pub(crate) async fn server_info(State(state): State<Arc<AppState>>) -> Json<ServerInfo> {
     Json(ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        network: state.network.clone(),
     })
 }
 

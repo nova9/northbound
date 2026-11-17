@@ -293,13 +293,10 @@ pub(crate) fn Send() -> Element {
                                                 match crate::api::broadcast_signed_transaction(signed_transaction.transaction_hex).await {
                                                     Ok(transaction_id) => send_state.set(SendState::Sent(transaction_id)),
                                                     Err(broadcast_error) => {
-                                                        match crate::api::fetch_transaction_status(expected_transaction_id.clone()).await {
-                                                            Ok(true) => send_state.set(SendState::Sent(expected_transaction_id)),
-                                                            Ok(false) => send_state.set(SendState::Uncertain(broadcast_error)),
-                                                            Err(status_error) => send_state.set(SendState::Uncertain(format!(
-                                                                "{broadcast_error} Status check also failed: {status_error}"
-                                                            ))),
-                                                        }
+                                                        let status = crate::api::fetch_transaction_status(expected_transaction_id.clone()).await;
+                                                        send_state.set(send_state_after_status_check(
+                                                            expected_transaction_id, broadcast_error, status,
+                                                        ));
                                                     }
                                                 }
                                             });
@@ -338,6 +335,20 @@ pub(crate) fn Send() -> Element {
                 }
             }
         }
+    }
+}
+
+fn send_state_after_status_check(
+    transaction_id: String,
+    broadcast_error: String,
+    status: Result<bool, String>,
+) -> SendState {
+    match status {
+        Ok(true) => SendState::Sent(transaction_id),
+        Ok(false) => SendState::Uncertain(broadcast_error),
+        Err(status_error) => SendState::Uncertain(format!(
+            "{broadcast_error} Status check also failed: {status_error}"
+        )),
     }
 }
 
@@ -492,6 +503,36 @@ mod tests {
         let change_address = wallet.next_change_address().unwrap();
         let plan = super::create_transaction_plan(utxos, 50_000, 1_001, change_address).unwrap();
         (wallet, plan, recipient)
+    }
+
+    #[test]
+    fn broadcast_errors_require_status_checks_and_preserve_uncertainty_and_reasons() {
+        for broadcast_error in [
+            "Could not send the transaction: dust",
+            "could not contact wallet server",
+        ] {
+            let sent = super::send_state_after_status_check(
+                "txid".into(),
+                broadcast_error.into(),
+                Ok(true),
+            );
+            assert!(matches!(sent, super::SendState::Sent(id) if id == "txid"));
+            let unknown = super::send_state_after_status_check(
+                "txid".into(),
+                broadcast_error.into(),
+                Ok(false),
+            );
+            assert!(
+                matches!(unknown, super::SendState::Uncertain(message) if message == broadcast_error)
+            );
+            let unavailable = super::send_state_after_status_check(
+                "txid".into(),
+                broadcast_error.into(),
+                Err("node unavailable".into()),
+            );
+            assert!(matches!(unavailable, super::SendState::Uncertain(message)
+                if message.contains(broadcast_error) && message.contains("node unavailable")));
+        }
     }
 
     #[test]

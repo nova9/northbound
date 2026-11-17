@@ -437,7 +437,7 @@ mod tests {
         database.publish_mempool_snapshot(&tip, 1, &[]).unwrap();
         assert!(reader.query_status().unwrap().ready);
         let snapshot = reader.read_snapshot(&[]).unwrap();
-        assert!(snapshot.query_transaction_known(&txid).unwrap());
+        assert!(snapshot.query_transaction_status(&txid).unwrap().known);
         assert!(
             snapshot
                 .query_utxos(None, shared::MAX_UTXO_PAGE_SIZE)

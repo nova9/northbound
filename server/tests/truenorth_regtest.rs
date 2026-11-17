@@ -26,6 +26,15 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     let url = format!("http://{bind}");
     let cookie =
         PathBuf::from(env::var_os("TRUENORTH_TEST_DATA_DIR").unwrap()).join("regtest/.cookie");
+    let node = truenorth_rpc::NodeClient::new(
+        &format!(
+            "http://127.0.0.1:{}",
+            env::var("TRUENORTH_TEST_RPC_PORT").unwrap()
+        ),
+        cookie.clone(),
+        "regtest",
+    )
+    .unwrap();
     let spawn_server = |mining_enabled: bool| {
         ServerProcess(
             Command::new(env!("CARGO_BIN_EXE_server"))
@@ -88,6 +97,21 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     let mining = run_cli(&["getnewaddress"]);
     run_cli(&["generatetoaddress", "101", &mining]);
     wait_ready(&client, &url, 101).await;
+    // Node refusals expose their reason instead of looking like a node outage.
+    let rejected = post(
+        &client,
+        &url,
+        "/v1/transactions/broadcast",
+        json!({"transaction_hex": "00"}),
+    )
+    .await;
+    assert_eq!(rejected.status(), 400);
+    assert!(
+        rejected.json::<Value>().await.unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .contains("TX decode failed")
+    );
     // A single mining address has enough outputs to require multiple pages.
     let mut cursor = None;
     let mut mining_outputs = Vec::new();
@@ -155,9 +179,80 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         "amount=1",
         "fee_rate=1",
     ]);
+    let payment_hex = run_cli(&["getrawtransaction", &payment]);
+    assert_eq!(
+        post(
+            &client,
+            &url,
+            "/v1/transactions/broadcast",
+            json!({"transaction_hex": payment_hex})
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["transaction_id"],
+        payment
+    );
+    assert_eq!(
+        node.fetch_transaction_status(&payment).await.unwrap(),
+        truenorth_rpc::TransactionStatus::Pending
+    );
     let pending = wait_history(&client, &url, &addresses, &payment, 0).await;
     support::mining::wait_template_transaction(&client, &url, &payment).await;
     assert_eq!(pending.transactions[0].net_amount, 100_000_000);
+    let status = post(
+        &client,
+        &url,
+        "/v1/transactions/status",
+        json!({"transaction_id": payment}),
+    )
+    .await
+    .error_for_status()
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(status, json!({"known": true, "block_height": null}));
+    // Spending a reward must not erase its identity in transaction history.
+    let decoded_payment = cli_json(&["decoderawtransaction", &payment_hex]);
+    let spent_reward = decoded_payment["vin"][0]["txid"].as_str().unwrap();
+    let mining_history: TransactionHistory = post(
+        &client,
+        &url,
+        "/v1/transactions",
+        json!({"addresses": [mining.clone()], "limit": 200}),
+    )
+    .await
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        mining_history
+            .transactions
+            .iter()
+            .any(|tx| tx.transaction_id == spent_reward && tx.coinbase)
+    );
+    assert!(!pending.transactions[0].coinbase);
+    let mining_utxos: UtxoResponse = post(
+        &client,
+        &url,
+        "/v1/utxos",
+        json!({"addresses": [mining.clone()]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        !mining_utxos
+            .utxos
+            .iter()
+            .any(|output| output.transaction_id == spent_reward)
+    );
     // A pending snapshot change invalidates cursors even without a new block.
     assert_eq!(
         post(
@@ -190,6 +285,55 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
     assert!(pending_utxos.utxos.is_empty());
     run_cli(&["generatetoaddress", "1", &mining]);
     wait_history(&client, &url, &addresses, &payment, 1).await;
+    let confirmed_status = post(
+        &client,
+        &url,
+        "/v1/transactions/status",
+        json!({"transaction_id": payment}),
+    )
+    .await
+    .error_for_status()
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(
+        confirmed_status,
+        json!({"known": true, "block_height": 102})
+    );
+    let indexed = cli_json(&["getindexinfo"]).get("txindex").is_some();
+    if indexed {
+        assert_eq!(
+            node.fetch_transaction_status(&payment).await.unwrap(),
+            truenorth_rpc::TransactionStatus::Confirmed { block_height: 102 }
+        );
+        assert_eq!(
+            node.fetch_transaction_status(&"00".repeat(32))
+                .await
+                .unwrap(),
+            truenorth_rpc::TransactionStatus::Unknown
+        );
+    } else {
+        assert!(
+            node.fetch_transaction_status(&payment).await.is_err(),
+            "unavailable historical lookup must not mean unknown"
+        );
+    }
+    assert_eq!(
+        post(
+            &client,
+            &url,
+            "/v1/transactions/broadcast",
+            json!({"transaction_hex": payment_hex})
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["transaction_id"],
+        payment
+    );
     let utxos: UtxoResponse = post(&client, &url, "/v1/utxos", json!({"addresses": addresses}))
         .await
         .json()
@@ -212,6 +356,40 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         json!([{recipient.clone(): 0.5}, {change.clone(): 0.49999800}]),
     );
     let parent = broadcast(&client, &url, &signed_parent).await;
+    assert_eq!(
+        post(
+            &client,
+            &url,
+            "/v1/transactions/broadcast",
+            json!({"transaction_hex": signed_parent})
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["transaction_id"],
+        parent
+    );
+    let conflict_hex = sign_spend(
+        &payment,
+        original.output_index,
+        json!([{recipient.clone(): 0.5}, {change.clone(): 0.49999900}]),
+    );
+    let conflict = post(
+        &client,
+        &url,
+        "/v1/transactions/broadcast",
+        json!({"transaction_hex": conflict_hex}),
+    )
+    .await;
+    assert_eq!(conflict.status(), 400);
+    assert!(
+        conflict.json::<Value>().await.unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .contains("fee")
+    );
     let history = wait_history(&client, &url, &addresses, &parent, 0).await;
     let parent_history = history
         .transactions
@@ -288,6 +466,66 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         1
     );
 
+    // The replacement spends everything from receiving, with no change to it.
+    let receiving_utxos: UtxoResponse = post(
+        &client,
+        &url,
+        "/v1/utxos",
+        json!({"addresses": [receiving.clone()]}),
+    )
+    .await
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(receiving_utxos.utxos.is_empty());
+    let no_change_status = post(
+        &client,
+        &url,
+        "/v1/transactions/status",
+        json!({"transaction_id": replacement}),
+    )
+    .await
+    .error_for_status()
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(
+        no_change_status,
+        json!({"known": true, "block_height": 103})
+    );
+    let conflict = post(
+        &client,
+        &url,
+        "/v1/transactions/broadcast",
+        json!({"transaction_hex": signed_parent}),
+    )
+    .await;
+    assert_eq!(conflict.status(), 409);
+    assert!(
+        conflict.json::<Value>().await.unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .contains("missingorspent")
+    );
+    // All outputs of the original payment are now spent; an exact repeat still succeeds.
+    assert_eq!(
+        post(
+            &client,
+            &url,
+            "/v1/transactions/broadcast",
+            json!({"transaction_hex": payment_hex})
+        )
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["transaction_id"],
+        payment
+    );
     run_cli(&["invalidateblock", mined[0].as_str().unwrap()]);
     run_cli(&["generateblock", &mining, "[]"]);
     wait_history(&client, &url, &addresses, &replacement, 0).await;
@@ -419,6 +657,21 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         .await
         .unwrap();
     assert_eq!(tip["height"], 105);
+    assert_eq!(tip, json!({"height": 105}));
+    let info: Value = client
+        .get(format!("{url}/info"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        json!({"version": env!("CARGO_PKG_VERSION"), "network": "regtest"})
+    );
     let known: Value = post(
         &client,
         &url,
@@ -433,6 +686,8 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
         known["known"], true,
         "confirmed lookup must work without txindex"
     );
+
+    assert_eq!(known["block_height"], 102);
 
     drop(server);
     server = spawn_server(true);

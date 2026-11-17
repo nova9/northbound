@@ -15,6 +15,13 @@ pub struct TransactionValidation {
     pub rejection_reason: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransactionStatus {
+    Unknown,
+    Pending,
+    Confirmed { block_height: u64 },
+}
+
 #[derive(Deserialize)]
 struct Acceptance {
     allowed: bool,
@@ -54,7 +61,15 @@ impl NodeClient {
     pub async fn broadcast_transaction(&self, hex: &str) -> Result<String> {
         validate_transaction_hex(hex)?;
         self.fetch_tip().await?;
-        let value = self.call_rpc("sendrawtransaction", json!([hex])).await?;
+        let value = match self.call_rpc("sendrawtransaction", json!([hex])).await {
+            Ok(value) => value,
+            // The daemon recognizes this exact transaction in the active chain.
+            // Decode it with TrueNorth to recover its ID, including its consensus rules.
+            Err(Error::Remote { code: -27, .. }) => {
+                return self.decode_transaction_id(hex).await;
+            }
+            Err(error) => return Err(error),
+        };
         let txid = value.as_str().ok_or_else(|| {
             Error::InvalidData("broadcast did not return a transaction ID".into())
         })?;
@@ -62,16 +77,69 @@ impl NodeClient {
         Ok(txid.to_owned())
     }
 
-    pub async fn is_transaction_known(&self, txid: &str) -> Result<bool> {
+    pub async fn decode_transaction_id(&self, hex: &str) -> Result<String> {
+        validate_transaction_hex(hex)?;
+        let decoded = self.call_rpc("decoderawtransaction", json!([hex])).await?;
+        let txid = decoded["txid"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidData("decoded transaction has no ID".into()))?;
         decode_hash(txid)?;
-        match self
-            .call_rpc("getrawtransaction", json!([txid, false]))
+        Ok(txid.to_owned())
+    }
+
+    pub async fn fetch_transaction_status(&self, txid: &str) -> Result<TransactionStatus> {
+        decode_hash(txid)?;
+        let value = match self
+            .call_rpc("getrawtransaction", json!([txid, true]))
             .await
         {
-            Ok(_) => Ok(true),
-            Err(Error::Remote { code: -5, .. }) => Ok(false),
-            Err(error) => Err(error),
+            Ok(value) => value,
+            Err(Error::Remote {
+                code: -5,
+                ref message,
+                ..
+            }) if message.starts_with("No such mempool or blockchain transaction.") => {
+                return Ok(TransactionStatus::Unknown);
+            }
+            // Missing/unsynced txindex cannot establish absence from the chain.
+            Err(error) => return Err(error),
+        };
+        if value["txid"].as_str().map(decode_hash).transpose()? != Some(decode_hash(txid)?) {
+            return Err(Error::InvalidData(
+                "transaction lookup returned a different ID".into(),
+            ));
         }
+        if value.get("blockhash").is_none() && value.get("confirmations").is_none() {
+            return Ok(TransactionStatus::Pending);
+        }
+        let block_hash = value["blockhash"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidData("transaction has no block hash".into()))?;
+        decode_hash(block_hash)?;
+        if value["confirmations"]
+            .as_u64()
+            .is_none_or(|count| count == 0)
+        {
+            return Err(Error::InvalidData(
+                "transaction is not in the active chain".into(),
+            ));
+        }
+        let header = self.call_rpc("getblockheader", json!([block_hash])).await?;
+        if header["hash"].as_str() != Some(block_hash)
+            || header["confirmations"]
+                .as_u64()
+                .is_none_or(|count| count == 0)
+        {
+            return Err(Error::InvalidData(
+                "transaction block is not in the active chain".into(),
+            ));
+        }
+        let height = header["height"]
+            .as_u64()
+            .ok_or_else(|| Error::InvalidData("transaction block has no valid height".into()))?;
+        Ok(TransactionStatus::Confirmed {
+            block_height: height,
+        })
     }
 }
 

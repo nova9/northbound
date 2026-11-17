@@ -280,8 +280,8 @@ mod tests {
             json!({"result": "duplicate-invalid", "error": null}),
             json!({"result": "inconclusive", "error": null}),
             json!({"result": "duplicate-inconclusive", "error": null}),
-            json!({"result": null, "error": {"code": -22}}),
-            json!({"result": null, "error": {"code": -1}}),
+            json!({"result": null, "error": {"code": -22, "message": "Block decode failed"}}),
+            json!({"result": null, "error": {"code": -1, "message": "Internal node error"}}),
             json!({"result": 42, "error": null}),
             json!({"result": null, "error": null}),
         ])));

@@ -132,3 +132,29 @@ fn require_current_index(status: &IndexStatus) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::test_support::serve;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn broadcast_rejection_reasons_remain_visible_to_the_wallet() {
+        for status in [400, 409, 502] {
+            let (url, server) = serve(1, move |_, _| (status, json!({"message": "node reason"})));
+            let response = http_client()
+                .unwrap()
+                .post(url)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            let error = require_success(response, "Could not send the transaction")
+                .await
+                .unwrap_err();
+            assert_eq!(error, "Could not send the transaction: node reason");
+            server.join().unwrap();
+        }
+    }
+}
