@@ -4,7 +4,7 @@ import http from 'k6/http';
 
 const baseUrl = 'https://api.northboundwallet.org';
 // The rate is shared by all workers: 50 requests per second total, not per worker.
-const requestsPerSecond = Number(__ENV.RATE || 250);
+const requestsPerSecond = Number(__ENV.RATE || 200);
 const maximumConcurrentRequests = Number(__ENV.MAX_VUS || 200);
 
 if (!Number.isInteger(requestsPerSecond) || requestsPerSecond < 1) {
