@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const COINBASE_MATURITY_CONFIRMATIONS: u64 = 100;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerInfo {
     pub version: String,
@@ -39,6 +41,9 @@ pub struct WalletTransaction {
     pub net_amount: i64,
     /// The whole transaction's fee, regardless of address ownership; null for coinbase.
     pub network_fee: Option<u64>,
+    /// True for a mining reward. Older servers omit this field.
+    #[serde(default)]
+    pub coinbase: bool,
     pub block_height: Option<u64>,
     pub confirmations: u64,
     pub timestamp: Option<u64>,

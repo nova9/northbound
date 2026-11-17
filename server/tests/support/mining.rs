@@ -3,7 +3,7 @@ use std::time::Duration;
 use reqwest::Client;
 use serde_json::{Value, json};
 
-use super::{cli_json, post, run_cli};
+use super::{cli_json, post, run_cli, wait_history};
 
 async fn wait_template(client: &Client, base: &str, parent: &str) -> Value {
     for _ in 0..100 {
@@ -117,6 +117,20 @@ pub async fn exercise_mining_api(client: &Client, base: &str) {
         cli_json(&["gettxout", coinbase["txid"].as_str().unwrap(), "0"])["coinbase"],
         true
     );
+    let history = wait_history(
+        client,
+        base,
+        &[address.clone()],
+        coinbase["txid"].as_str().unwrap(),
+        1,
+    )
+    .await;
+    let reward = history
+        .transactions
+        .iter()
+        .find(|transaction| transaction.transaction_id == coinbase["txid"].as_str().unwrap())
+        .unwrap();
+    assert!(reward.coinbase);
     while let Some(updated) = waiters.join_next().await {
         assert_eq!(updated.unwrap()["previousblockhash"], hash);
     }

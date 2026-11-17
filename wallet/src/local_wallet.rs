@@ -48,7 +48,8 @@ pub struct RecoveredAddressIndexes {
 
 impl VerifiedUtxo {
     pub fn is_spendable(&self) -> bool {
-        let coinbase_is_mature = !self.coinbase || self.confirmations >= 100;
+        let coinbase_is_mature =
+            !self.coinbase || self.confirmations >= shared::COINBASE_MATURITY_CONFIRMATIONS;
 
         self.confirmations > 0 && coinbase_is_mature
     }
@@ -568,6 +569,30 @@ mod tests {
     use crate::wallet_secrets::{
         CURRENT_KEY_DERIVATION_PARAMETERS, DecryptedWalletSecrets, KeyDerivationParameters,
     };
+
+    #[test]
+    fn mining_rewards_enter_spendable_balance_at_one_hundred_confirmations() {
+        let mut reward = super::VerifiedUtxo {
+            outpoint: bitcoin::OutPoint::null(),
+            amount: bitcoin::Amount::from_sat(51_200_000_000),
+            script_pubkey: bitcoin::ScriptBuf::new(),
+            keychain: WalletKeychain::Receiving,
+            derivation_index: 0,
+            confirmations: 68,
+            coinbase: true,
+        };
+        assert_eq!(
+            super::calculate_spendable_balance(&[reward.clone()]).unwrap(),
+            0
+        );
+        reward.confirmations = 99;
+        assert!(!reward.is_spendable());
+        reward.confirmations = 100;
+        assert_eq!(
+            super::calculate_spendable_balance(&[reward]).unwrap(),
+            51_200_000_000
+        );
+    }
 
     #[test]
     fn wallets_keep_their_passwords_and_address_indexes_in_separate_files() {

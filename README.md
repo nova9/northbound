@@ -116,6 +116,27 @@ named wallet. Address, mining, and sending commands automatically load an
 existing wallet when needed. Development
 commands share the persistent data directory `.local/truenorth/`.
 
+For a local mainnet node, use `./scripts/mainnet.sh start` and
+`./scripts/mainnet.sh stop`. Use `./scripts/mainnet.sh tip` to display the current
+height, best block hash, and synchronization status. Use `./scripts/mainnet.sh peers`
+for the connected peer count. Use `./scripts/mainnet.sh presync` to read the latest
+logged header pre-sync, header re-download, or block-tip progress for the latest
+startup, plus the highest peer-advertised height logged during that startup.
+Peer heights are reported claims, not verified network tips. The output includes
+timestamps; a stopped node's output may be stale.
+This helps while RPC reports height zero during header pre-sync.
+The script runs an unpruned node with RPC on loopback,
+using `.local/truenorth/mainnet/` for mainnet data and `.local/truenorth/mainnet/.cookie` for RPC
+authentication. Regtest data remains in its `regtest/` subdirectory. Initial
+mainnet synchronization downloads the chain and requires disk space for it.
+Run the API with a separate mainnet index:
+
+```bash
+TRUENORTH_NETWORK=main \
+TRUENORTH_INDEX_DATABASE=.local/indexer/mainnet.sqlite \
+  cargo run -p server --release
+```
+
 Run the server and wallet in separate terminals:
 
 ```bash

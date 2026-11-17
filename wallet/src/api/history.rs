@@ -137,6 +137,7 @@ fn merge_transaction(
         || existing.confirmations != incoming.confirmations
         || existing.timestamp != incoming.timestamp
         || existing.network_fee != incoming.network_fee
+        || existing.coinbase != incoming.coinbase
     {
         return Err("The wallet server returned conflicting transaction details.".into());
     }
@@ -162,6 +163,43 @@ mod tests {
             "net_amount": net_amount, "network_fee": 10_000_000,
             "block_height": 120, "confirmations": 1, "timestamp": 1000
         })
+    }
+
+    #[test]
+    fn address_batches_must_agree_on_whether_a_transaction_is_a_mining_reward() {
+        let mut transactions = HashMap::new();
+        let mut first: WalletTransaction = serde_json::from_value(transaction(1, 100)).unwrap();
+        first.coinbase = true;
+        merge_transaction(&mut transactions, first.clone()).unwrap();
+        merge_transaction(&mut transactions, first.clone()).unwrap();
+        assert!(transactions[&first.transaction_id].coinbase);
+        first.coinbase = false;
+        assert!(merge_transaction(&mut transactions, first).is_err());
+    }
+
+    #[test]
+    fn immature_rewards_remain_in_history_with_current_and_older_servers() {
+        for includes_coinbase_field in [false, true] {
+            let (url, server) = serve(1, move |_, _| {
+                let mut reward = transaction(1, 51_200_000_000);
+                reward["network_fee"] = Value::Null;
+                reward["confirmations"] = json!(68);
+                reward["block_height"] = json!(53);
+                if includes_coinbase_field {
+                    reward["coinbase"] = json!(true);
+                }
+                (200, page(vec![transaction(2, -100), reward], None))
+            });
+            let history = fetch(addresses(1), &url).unwrap();
+            server.join().unwrap();
+            assert_eq!(history.len(), 2);
+            let reward = history
+                .iter()
+                .find(|transaction| transaction.net_amount == 51_200_000_000)
+                .unwrap();
+            assert_eq!(reward.confirmations, 68);
+            assert_eq!(reward.coinbase, includes_coinbase_field);
+        }
     }
 
     fn page(transactions: Vec<Value>, cursor: Option<&str>) -> Value {

@@ -27,7 +27,7 @@ impl ServerConfig {
             "http://127.0.0.1:18443"
         };
         let default_cookie_path = if network == "main" {
-            ".local/truenorth/.cookie"
+            ".local/truenorth/mainnet/.cookie"
         } else {
             ".local/truenorth/regtest/.cookie"
         };

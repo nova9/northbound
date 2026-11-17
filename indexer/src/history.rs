@@ -181,6 +181,7 @@ impl ReadSnapshot<'_> {
             transaction_id: hex::encode(id),
             net_amount,
             network_fee,
+            coinbase: is_coinbase,
             block_height: height,
             confirmations,
             timestamp: Some(timestamp),
@@ -338,6 +339,7 @@ mod tests {
             .unwrap();
         assert_eq!(self_payment.net_amount, -163);
         assert_eq!(self_payment.network_fee, Some(163));
+        assert!(!self_payment.coinbase);
         let coinbase = history
             .transactions
             .iter()
@@ -345,5 +347,6 @@ mod tests {
             .unwrap();
         assert_eq!(coinbase.net_amount, 51_200_000_000);
         assert_eq!(coinbase.network_fee, None);
+        assert!(coinbase.coinbase);
     }
 }

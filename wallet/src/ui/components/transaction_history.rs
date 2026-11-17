@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use shared::WalletTransaction;
+use shared::{COINBASE_MATURITY_CONFIRMATIONS, WalletTransaction};
 
 use crate::config::CURRENCY_TICKER;
 
@@ -22,10 +22,28 @@ fn format_north(amount: u64) -> String {
 }
 
 fn status_label(transaction: &WalletTransaction) -> &'static str {
-    if transaction.confirmations == 0 {
+    if is_immature_mining_reward(transaction) {
+        "Immature"
+    } else if transaction.confirmations == 0 {
         "Pending"
     } else {
         "Confirmed"
+    }
+}
+
+fn is_immature_mining_reward(transaction: &WalletTransaction) -> bool {
+    transaction.coinbase && transaction.confirmations < COINBASE_MATURITY_CONFIRMATIONS
+}
+
+fn transaction_label(transaction: &WalletTransaction) -> &'static str {
+    if transaction.coinbase {
+        "Mining reward"
+    } else if transaction.net_amount < 0 {
+        "Net sent"
+    } else if transaction.net_amount > 0 {
+        "Net received"
+    } else {
+        "No net change"
     }
 }
 
@@ -73,7 +91,9 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
         .network_fee
         .map(format_north)
         .unwrap_or_else(|| "Not applicable".to_owned());
-    let status_class = if selected_transaction.confirmations == 0 {
+    let status_class = if is_immature_mining_reward(selected_transaction) {
+        "transaction-status immature"
+    } else if selected_transaction.confirmations == 0 {
         "transaction-status pending"
     } else {
         "transaction-status confirmed"
@@ -92,13 +112,7 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                                 "transaction-row"
                             };
                             let transaction_is_sent = transaction.net_amount < 0;
-                            let direction = if transaction_is_sent {
-                                "Net sent"
-                            } else if transaction.net_amount > 0 {
-                                "Net received"
-                            } else {
-                                "No net change"
-                            };
+                            let direction = transaction_label(transaction);
                             let amount = net_wallet_change(transaction);
                             let amount_class = if transaction_is_sent {
                                 "transaction-value sent"
@@ -148,10 +162,14 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                         span { class: "{status_class}", "{selected_status}" }
                     }
                     p { class: "transaction-status-copy",
-                        if selected_transaction.confirmations == 0 {
+                        if is_immature_mining_reward(selected_transaction) {
+                            "Mining rewards become available at {COINBASE_MATURITY_CONFIRMATIONS} confirmations. This reward is not included in your available balance yet."
+                        } else if selected_transaction.confirmations == 0 {
                             "Seen by the node and waiting to be included in a block."
+                        } else if selected_transaction.coinbase {
+                            "This mining reward has matured."
                         } else {
-                            "Included in the chain and available to the wallet."
+                            "Included in the chain."
                         }
                     }
 
@@ -211,7 +229,10 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
 
 #[cfg(test)]
 mod tests {
-    use super::{CURRENCY_TICKER, format_confirmation_count, format_north, net_wallet_change};
+    use super::{
+        CURRENCY_TICKER, format_confirmation_count, format_north, net_wallet_change, status_label,
+        transaction_label,
+    };
     use shared::WalletTransaction;
 
     #[test]
@@ -220,6 +241,7 @@ mod tests {
             transaction_id: "ab".repeat(32),
             net_amount: -310_000_000,
             network_fee: Some(10_000_000),
+            coinbase: false,
             block_height: Some(120),
             confirmations: 1,
             timestamp: Some(1000),
@@ -259,5 +281,32 @@ mod tests {
     fn one_confirmation_uses_singular_grammar() {
         assert_eq!(format_confirmation_count(1), "1 confirmation");
         assert_eq!(format_confirmation_count(2), "2 confirmations");
+    }
+
+    #[test]
+    fn mining_rewards_are_identified_and_immature_until_the_balance_accepts_them() {
+        let mut transaction = WalletTransaction {
+            transaction_id: "ab".repeat(32),
+            net_amount: 51_200_000_000,
+            network_fee: None,
+            coinbase: true,
+            block_height: Some(120),
+            confirmations: 68,
+            timestamp: Some(1000),
+        };
+        assert_eq!(transaction_label(&transaction), "Mining reward");
+        assert_eq!(status_label(&transaction), "Immature");
+        transaction.confirmations = 99;
+        assert_eq!(status_label(&transaction), "Immature");
+        transaction.confirmations = 100;
+        assert_eq!(status_label(&transaction), "Confirmed");
+        assert_eq!(transaction_label(&transaction), "Mining reward");
+
+        transaction.coinbase = false;
+        transaction.confirmations = 1;
+        assert_eq!(status_label(&transaction), "Confirmed");
+        assert_eq!(transaction_label(&transaction), "Net received");
+        transaction.confirmations = 0;
+        assert_eq!(status_label(&transaction), "Pending");
     }
 }
