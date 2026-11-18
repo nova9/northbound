@@ -48,6 +48,15 @@ pub(crate) fn Home() -> Element {
         return rsx! {};
     };
 
+    let history_addresses = addresses.clone();
+    let total_balance = use_resource(move || {
+        let addresses = history_addresses.clone();
+
+        async move {
+            let transactions = crate::api::fetch_transaction_history(addresses?).await?;
+            calculate_total_balance(&transactions)
+        }
+    });
     let utxos = use_resource(move || {
         let addresses = addresses.clone();
 
@@ -75,10 +84,10 @@ pub(crate) fn Home() -> Element {
         section { class: "screen overview-screen",
             header { class: "balance",
                 div { class: "balance-heading",
-                    h1 { "Available balance" }
+                    h1 { "Total balance" }
                 }
                 div { class: "amount-row",
-                    match &balance {
+                    match &*total_balance.read() {
                         None => rsx! {
                             strong { class: "amount", "Loading…" }
                         },
@@ -91,8 +100,18 @@ pub(crate) fn Home() -> Element {
                         },
                     }
                 }
-                if let Some(Err(message)) = &balance {
-                    p { class: "error-message", role: "alert", "Could not load balance: {message}" }
+                p { class: "muted", "Includes pending transactions and immature mining rewards." }
+                if let Some(Err(message)) = &*total_balance.read() {
+                    p { class: "error-message", role: "alert", "Could not load total balance: {message}" }
+                }
+                match &balance {
+                    None => rsx! { p { "Available to spend · Loading…" } },
+                    Some(Ok(amount)) => rsx! {
+                        p { "Available to spend · {format_north(*amount)} {CURRENCY_TICKER}" }
+                    },
+                    Some(Err(message)) => rsx! {
+                        p { class: "error-message", role: "alert", "Could not load spendable balance: {message}" }
+                    },
                 }
             }
 
@@ -166,4 +185,48 @@ fn format_north(amount: u64) -> String {
     let fractional_units = amount % ATOMIC_UNITS_PER_NORTH;
 
     format!("{whole_units}.{fractional_units:08}")
+}
+
+fn calculate_total_balance(transactions: &[shared::WalletTransaction]) -> Result<u64, String> {
+    let mut total = 0_i128;
+    for transaction in transactions {
+        total = total
+            .checked_add(i128::from(transaction.net_amount))
+            .ok_or_else(|| "Transaction history balance is too large.".to_owned())?;
+    }
+
+    u64::try_from(total).map_err(|_| "Transaction history returned an invalid balance.".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::WalletTransaction;
+
+    #[test]
+    fn total_balance_includes_pending_payment_and_its_fee() {
+        let pending_send = WalletTransaction {
+            transaction_id: "01".repeat(32),
+            net_amount: -1_000_000_165,
+            network_fee: Some(165),
+            coinbase: false,
+            block_height: None,
+            confirmations: 0,
+            timestamp: None,
+        };
+        let mining_reward = WalletTransaction {
+            transaction_id: "02".repeat(32),
+            net_amount: 51_200_000_488,
+            network_fee: None,
+            coinbase: true,
+            block_height: Some(26_073),
+            confirmations: 802,
+            timestamp: None,
+        };
+
+        assert_eq!(
+            calculate_total_balance(&[pending_send, mining_reward]),
+            Ok(50_200_000_323)
+        );
+    }
 }
