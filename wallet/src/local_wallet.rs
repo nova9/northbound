@@ -124,19 +124,14 @@ impl UnlockedWallet {
         }
 
         for index in 0..self.secrets.next_change_index() {
-            let public_key =
-                keys::derive_change_public_key_from_entropy(self.secrets.bip39_entropy(), index)?;
-            addresses.push(p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)?);
+            addresses.push(self.address_at(WalletKeychain::Change, index)?);
         }
 
         Ok(addresses)
     }
 
     pub fn receiving_address_at(&self, index: u32) -> Result<String, String> {
-        let public_key =
-            keys::derive_receiving_public_key_from_entropy(self.secrets.bip39_entropy(), index)?;
-
-        p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
+        self.address_at(WalletKeychain::Receiving, index)
     }
 
     pub fn recent_receiving_addresses_for_allocation_check(&self) -> Result<Vec<String>, String> {
@@ -298,24 +293,12 @@ impl UnlockedWallet {
         let mut updated_secrets = self.secrets.clone();
         updated_secrets.advance_receiving_index()?;
 
-        let encrypted_wallet = updated_secrets.encrypt_with_key(
-            &self.salt,
-            &self.encryption_key,
-            self.key_derivation_parameters,
-        )?;
-        wallet_file::save(&self.path, &encrypted_wallet)?;
-
-        self.secrets = updated_secrets;
-
+        self.save_updated_secrets(updated_secrets)?;
         Ok(address)
     }
 
     pub fn next_change_address(&self) -> Result<String, String> {
-        let index = self.secrets.next_change_index();
-        let public_key =
-            keys::derive_change_public_key_from_entropy(self.secrets.bip39_entropy(), index)?;
-
-        p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
+        self.address_at(WalletKeychain::Change, self.secrets.next_change_index())
     }
 
     pub fn reserve_and_persist_next_change_address(&mut self) -> Result<String, String> {
@@ -323,16 +306,22 @@ impl UnlockedWallet {
         let mut updated_secrets = self.secrets.clone();
         updated_secrets.advance_change_index()?;
 
+        self.save_updated_secrets(updated_secrets)?;
+        Ok(address)
+    }
+
+    fn save_updated_secrets(
+        &mut self,
+        updated_secrets: DecryptedWalletSecrets,
+    ) -> Result<(), String> {
         let encrypted_wallet = updated_secrets.encrypt_with_key(
             &self.salt,
             &self.encryption_key,
             self.key_derivation_parameters,
         )?;
         wallet_file::save(&self.path, &encrypted_wallet)?;
-
         self.secrets = updated_secrets;
-
-        Ok(address)
+        Ok(())
     }
 
     pub fn verify_utxos(&self, utxos: Vec<WalletUtxo>) -> Result<Vec<VerifiedUtxo>, String> {

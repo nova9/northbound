@@ -37,81 +37,46 @@ struct WalletSettings {
     custom_api_base_url: Option<String>,
 }
 
-struct ApiConfiguration {
-    custom_url: Option<String>,
-    load_error: Option<String>,
-}
-
-static API_CONFIGURATION: OnceLock<RwLock<ApiConfiguration>> = OnceLock::new();
+static WALLET_SETTINGS_CACHE: OnceLock<RwLock<Result<WalletSettings, String>>> = OnceLock::new();
 
 pub(crate) fn current_api_base_url() -> Result<String, String> {
-    let configuration = api_configuration();
-    let configuration = configuration
-        .read()
-        .map_err(|_| "wallet server settings are unavailable".to_owned())?;
-
-    if let Some(error) = &configuration.load_error {
-        return Err(error.clone());
-    }
-
-    let url = configuration
-        .custom_url
-        .as_deref()
-        .unwrap_or(DEFAULT_API_BASE_URL);
-    validate_and_normalize_api_base_url(url)
+    let custom_url = custom_api_base_url()?;
+    validate_and_normalize_api_base_url(custom_url.as_deref().unwrap_or(DEFAULT_API_BASE_URL))
 }
 
 pub(crate) fn custom_api_base_url() -> Result<Option<String>, String> {
-    let configuration = api_configuration();
-    let configuration = configuration
+    let settings = wallet_settings_cache()
         .read()
         .map_err(|_| "wallet server settings are unavailable".to_owned())?;
 
-    if let Some(error) = &configuration.load_error {
-        return Err(error.clone());
+    match &*settings {
+        Ok(settings) => Ok(settings.custom_api_base_url.clone()),
+        Err(error) => Err(error.clone()),
     }
-
-    Ok(configuration.custom_url.clone())
 }
 
 pub(crate) fn save_custom_api_base_url(url: &str) -> Result<String, String> {
     let normalized_url = validate_and_normalize_api_base_url(url)?;
-    let settings = WalletSettings {
+    save_and_cache_settings(WalletSettings {
         custom_api_base_url: Some(normalized_url.clone()),
-    };
-
-    write_settings_file(&settings)?;
-    replace_api_configuration(Some(normalized_url.clone()))?;
-
+    })?;
     Ok(normalized_url)
 }
 
 pub(crate) fn reset_api_base_url_to_default() -> Result<(), String> {
-    write_settings_file(&WalletSettings::default())?;
-    replace_api_configuration(None)
+    save_and_cache_settings(WalletSettings::default())
 }
 
-fn api_configuration() -> &'static RwLock<ApiConfiguration> {
-    API_CONFIGURATION.get_or_init(|| {
-        let (custom_url, load_error) = match read_settings_file() {
-            Ok(settings) => (settings.custom_api_base_url, None),
-            Err(error) => (None, Some(error)),
-        };
-
-        RwLock::new(ApiConfiguration {
-            custom_url,
-            load_error,
-        })
-    })
+fn wallet_settings_cache() -> &'static RwLock<Result<WalletSettings, String>> {
+    WALLET_SETTINGS_CACHE.get_or_init(|| RwLock::new(read_settings_file()))
 }
 
-fn replace_api_configuration(custom_url: Option<String>) -> Result<(), String> {
-    let configuration = api_configuration();
-    let mut configuration = configuration
+fn save_and_cache_settings(settings: WalletSettings) -> Result<(), String> {
+    let mut cached_settings = wallet_settings_cache()
         .write()
         .map_err(|_| "wallet server settings are unavailable".to_owned())?;
-    configuration.custom_url = custom_url;
-    configuration.load_error = None;
+    write_settings_file(&settings)?;
+    *cached_settings = Ok(settings);
     Ok(())
 }
 

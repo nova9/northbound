@@ -39,12 +39,7 @@ pub(crate) fn recovery_phrase_matches_entropy(
     recovery_phrase: &str,
     expected_entropy: &[u8; 16],
 ) -> Result<bool, String> {
-    let mnemonic = Mnemonic::parse(recovery_phrase)
-        .map_err(|error| format!("invalid recovery phrase: {error}"))?;
-
-    if mnemonic.word_count() != 12 {
-        return Err("recovery phrase must contain exactly 12 words".to_owned());
-    }
+    let mnemonic = parse_recovery_phrase(recovery_phrase)?;
 
     let mut entered_entropy: [u8; 16] = mnemonic
         .to_entropy()
@@ -70,6 +65,12 @@ pub fn generate_new_wallet() -> Result<PendingWallet, String> {
 }
 
 pub fn restore_wallet(recovery_phrase: &str) -> Result<PendingWallet, String> {
+    let mnemonic = parse_recovery_phrase(recovery_phrase)?;
+
+    wallet_from_mnemonic(mnemonic)
+}
+
+fn parse_recovery_phrase(recovery_phrase: &str) -> Result<Mnemonic, String> {
     let mnemonic = Mnemonic::parse(recovery_phrase)
         .map_err(|error| format!("invalid recovery phrase: {error}"))?;
 
@@ -77,7 +78,7 @@ pub fn restore_wallet(recovery_phrase: &str) -> Result<PendingWallet, String> {
         return Err("recovery phrase must contain exactly 12 words".to_owned());
     }
 
-    wallet_from_mnemonic(mnemonic)
+    Ok(mnemonic)
 }
 
 #[cfg(test)]
