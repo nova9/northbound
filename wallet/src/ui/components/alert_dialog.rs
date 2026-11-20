@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 
+use super::ModalDialog;
+
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum AlertTone {
     Information,
@@ -22,22 +24,19 @@ pub(crate) fn AlertDialog(
     };
 
     rsx! {
-        div { class: "alert-backdrop",
-            section {
-                class: tone_class,
-                role: "alertdialog",
-                aria_modal: "true",
-                aria_label: title.clone(),
-                h2 { "{title}" }
-                p { "{message}" }
-                div { class: "alert-actions",
-                    button {
-                        class: "button primary",
-                        r#type: "button",
-                        autofocus: true,
-                        onclick: move |_| on_dismiss.call(()),
-                        "{dismiss_label}"
-                    }
+        ModalDialog {
+            title,
+            class: tone_class,
+            role: "alertdialog",
+            on_cancel: on_dismiss,
+            p { "{message}" }
+            div { class: "alert-actions",
+                button {
+                    class: "button primary",
+                    r#type: "button",
+                    autofocus: true,
+                    onclick: move |_| on_dismiss.call(()),
+                    "{dismiss_label}"
                 }
             }
         }

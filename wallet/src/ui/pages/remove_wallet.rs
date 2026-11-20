@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::ui::components::{ErrorMessage, Field};
+use crate::ui::components::{ErrorMessage, Field, ModalDialog};
 use crate::ui::state::AppContext;
 use crate::wallet_catalog::{WalletFile, remove_wallet_file};
 
@@ -17,8 +17,10 @@ pub(super) fn RemoveWallet(
     let can_remove = backup_confirmed() && confirmed_name() == wallet.name;
 
     rsx! {
-        section { class: "wallet-removal", aria_label: "Remove wallet confirmation",
-            h2 { "Remove {wallet.name}?" }
+        ModalDialog {
+            title: "Remove {wallet.name}?",
+            class: "wallet-removal",
+            on_cancel,
             p { "This permanently deletes this wallet’s encrypted file from this device. It does not move any coins. You will need your recovery words to restore access." }
             label { class: "backup-confirmation",
                 input {

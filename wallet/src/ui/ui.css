@@ -89,7 +89,13 @@ select { width: 170px; }
 .help-link { display: inline-flex; align-items: center; gap: 8px; width: fit-content; margin-top: 18px; text-decoration: none; }
 .help-link:hover { background: #dce3e9; }
 .help-note { margin-top: 12px; color: var(--color-text) !important; }
-.faq-content { flex: 1; width: 100%; padding-top: 2px; }
+.panel-scroll.faq-content { flex: 1; padding: 0; margin-bottom: 16px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.faq-content .help-topic { padding: 0 16px; }
+.faq-content summary { padding: 14px 0; }
+.faq-content summary:focus-visible { outline-offset: -2px; }
+.faq-content .help-topic[open] { padding-bottom: 16px; }
+.faq-content .help-topic p { margin-top: 0; }
+.faq-content .help-topic:last-child { border-bottom: 0; }
 .faq-source-link { display: inline-block; margin: 14px 0 0 16px; }
 .muted { color: var(--color-text-muted); }
 .button { min-height: 36px; padding: 8px 14px; border: 1px solid transparent; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -147,7 +153,11 @@ select { width: 170px; }
 .wallet-list-details { display: grid; gap: 5px; flex: 1; min-width: 0; font-size: 12px; }
 .wallet-list-details strong { overflow-wrap: anywhere; font-size: 14px; }
 .wallet-remove-button { color: var(--color-error); }
-.wallet-removal { display: grid; gap: 18px; max-width: 560px; margin-top: 26px; padding: 22px 0; border-top: 1px solid var(--color-border); }
+.wallet-removal.modal-dialog { width: min(460px, calc(100% - 32px)); height: fit-content; margin: auto; overflow-y: auto; }
+.wallet-removal h2 { font-size: 19px; margin-bottom: 6px; }
+.wallet-removal .backup-confirmation { margin: 18px 0 14px; align-items: baseline; }
+.wallet-removal .backup-confirmation input { flex: none; align-self: flex-start; margin: 1px 0 0; }
+.wallet-removal .actions-row { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--color-border); justify-content: flex-end; }
 .wallet-removal > p { font-size: 13px; color: var(--color-text-muted); }
 .backup-confirmation { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer; }
 .settings-body > p { color: var(--color-text-muted); margin: 8px 0 24px; max-width: 70ch; font-size: 13px; }
@@ -179,6 +189,10 @@ select { width: 170px; }
 .recovery-grid li::before { content: counter(word,decimal-leading-zero); font-size: 10px; color: var(--color-text-muted); }
 .overview-screen { display: flex; flex-direction: column; gap: 24px; overflow-y: auto; padding-right: 8px; }
 .balance { display: flex; flex-direction: column; gap: 12px; padding: 24px 26px; background: white; border: 1px solid var(--color-border); border-radius: 9px; }
+.spendable-balance { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin: 2px 0 0; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.spendable-balance dt { font-size: 13px; font-weight: 500; }
+.spendable-balance dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0; overflow-wrap: anywhere; }
+.spendable-balance strong { color: var(--color-primary); font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .balance-heading h1 { font-size: 13px; color: var(--color-text-muted); font-weight: 500; }
 .amount-row { display: flex; align-items: baseline; gap: 10px; }
 .amount { font-size: 36px; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
@@ -232,8 +246,8 @@ select { width: 170px; }
 .current-address-row { background: #eaf0f8; }
 .address-row code { line-height: 1.7; }
 .address-list-error { padding: 10px 0; }
-.alert-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(23,35,55,.42); }
-.alert-dialog { width: min(420px,100%); padding: 24px; background: var(--color-surface); border-radius: 8px; box-shadow: 0 16px 42px rgba(23,35,55,.24); }
+.modal-dialog { width: min(420px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 24px; border: 0; border-radius: 8px; color: var(--color-text); background: var(--color-surface); box-shadow: 0 16px 42px rgba(23,35,55,.24); overflow-wrap: anywhere; }
+.modal-dialog::backdrop { background: rgba(23,35,55,.42); }
 .alert-dialog h2 { font-size: 17px; }
 .alert-dialog p { margin-top: 10px; color: var(--color-text-muted); font-size: 13px; }
 .alert-dialog.information h2 { color: var(--color-primary); }
@@ -244,23 +258,25 @@ select { width: 170px; }
 .alert-dialog.danger .button.primary { background: var(--color-error); }
 .alert-dialog.danger .button.primary:hover { background: #8f2929; }
 .alert-actions { display: flex; justify-content: flex-end; margin-top: 22px; }
-.transaction-history { flex: 1; min-height: 0; }
-.transaction-browser { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); height: 100%; gap: 24px; }
-.transaction-list { padding-right: 4px; }
-.transaction-row { width: 100%; display: flex; justify-content: space-between; gap: 10px; padding: 17px 12px; background: transparent; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; text-align: left; color: var(--color-text); }
+.transaction-history { flex: 1; min-height: 0; margin-bottom: 16px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.transaction-browser { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); height: 100%; }
+.transaction-list { background: var(--color-background); }
+.transaction-row:focus-visible { outline-offset: -3px; }
+.transaction-row { width: 100%; display: flex; justify-content: space-between; gap: 10px; padding: 14px 16px; background: transparent; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; text-align: left; color: var(--color-text); }
 .transaction-row:hover { background: #edf1f6; }
 .transaction-row.selected { background: #e4edf9; }
 .transaction-details, .transaction-numbers { display: grid; gap: 7px; font-size: 12px; }
-.transaction-numbers { text-align: right; }
+.transaction-numbers { text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .transaction-meta, .transaction-time { color: var(--color-text-muted); font-size: 11px; }
 .transaction-value { font-size: 12px; font-variant-numeric: tabular-nums; }
 .transaction-value.received { color: var(--color-success); }
-.transaction-detail { border-left: 1px solid var(--color-border); padding: 2px 8px 16px 24px; }
+.transaction-detail { border-left: 1px solid var(--color-border); padding: 20px 24px; }
 .transaction-detail-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .transaction-status { font-size: 11px; }
 .transaction-status.confirmed { color: var(--color-success); }
-.transaction-status-copy { font-size: 12px; color: var(--color-text-muted); margin: 12px 0 24px; }
-.transaction-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 16px; }
+.transaction-detail-amount { margin-top: 14px; font-size: clamp(16px, 2vw, 24px); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.transaction-status-copy { font-size: 12px; color: var(--color-text-muted); margin: 4px 0 20px; }
+.transaction-facts { padding-top: 18px; border-top: 1px solid var(--color-border); display: grid; grid-template-columns: 1fr 1fr; gap: 22px 16px; }
 .transaction-facts dt, .transaction-id > span { display: block; font-size: 11px; color: var(--color-text-muted); margin-bottom: 7px; }
 .transaction-facts dd { margin: 0; font-size: 12px; line-height: 1.6; }
 .transaction-facts > div:has(code) { grid-column: 1/-1; }
@@ -299,10 +315,8 @@ select { width: 170px; }
     .send-layout { grid-template-columns: minmax(0,1fr) minmax(240px,.8fr); gap: 20px; }
     .send-summary { padding-left: 20px; }
     .sidebar-link { padding-left: 8px; }
-    .transaction-browser { gap: 16px; }
     .transaction-detail { padding-left: 16px; }
-    .transaction-row { flex-direction: column; }
-    .transaction-numbers { text-align: left; }
+
 }
 @media (max-height: 700px) {
     .sidebar { padding-top: 16px; }

@@ -104,14 +104,20 @@ pub(crate) fn Home() -> Element {
                 if let Some(Err(message)) = &*total_balance.read() {
                     p { class: "error-message", role: "alert", "Could not load total balance: {message}" }
                 }
-                match &balance {
-                    None => rsx! { p { "Available to spend · Loading…" } },
-                    Some(Ok(amount)) => rsx! {
-                        p { "Available to spend · {format_north(*amount)} {CURRENCY_TICKER}" }
-                    },
-                    Some(Err(message)) => rsx! {
-                        p { class: "error-message", role: "alert", "Could not load spendable balance: {message}" }
-                    },
+                dl { class: "spendable-balance",
+                    dt { "Available to spend" }
+                    dd {
+                        match &balance {
+                            None => rsx! { span { class: "muted", "Loading…" } },
+                            Some(Ok(amount)) => rsx! {
+                                strong { "{format_north(*amount)}" }
+                                span { class: "currency", "{CURRENCY_TICKER}" }
+                            },
+                            Some(Err(message)) => rsx! {
+                                p { class: "error-message", role: "alert", "Could not load spendable balance: {message}" }
+                            },
+                        }
+                    }
                 }
             }
 

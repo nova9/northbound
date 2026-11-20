@@ -120,12 +120,6 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                                 "transaction-value received"
                             };
                             let transaction_status = status_label(transaction);
-                            let confirmation_summary = if transaction.confirmations == 0 {
-                                "Waiting for confirmation".to_owned()
-                            } else {
-                                format_confirmation_count(transaction.confirmations)
-                            };
-
                             rsx! {
                                 button {
                                     class: "{row_class}",
@@ -139,7 +133,7 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                                     div { class: "transaction-details",
                                         strong { "{direction}" }
                                         span { class: "transaction-meta",
-                                            "{transaction_status} · {confirmation_summary}"
+                                            "{transaction_status}"
                                         }
                                     }
                                     div { class: "transaction-numbers",
@@ -158,9 +152,10 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
 
                 section { class: "transaction-detail", aria_label: "Transaction details",
                     div { class: "transaction-detail-heading",
-                        h2 { "Transaction details" }
+                        h2 { "{transaction_label(selected_transaction)}" }
                         span { class: "{status_class}", "{selected_status}" }
                     }
+                    p { class: "transaction-detail-amount", "{net_wallet_change(selected_transaction)}" }
                     p { class: "transaction-status-copy",
                         if is_immature_mining_reward(selected_transaction) {
                             "Mining rewards become available at {COINBASE_MATURITY_CONFIRMATIONS} confirmations. This reward is not included in your available balance yet."
@@ -188,11 +183,6 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
                                 "{selected_fee}"
                             }
                         }
-                        div {
-                            dt { "Net wallet change" }
-                            dd { "{net_wallet_change(selected_transaction)}" }
-                        }
-
                     }
 
                     div { class: "transaction-id",
