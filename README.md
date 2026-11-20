@@ -54,18 +54,19 @@ See [SECURITY.md](SECURITY.md) for the current security boundary and
 [ROADMAP.md](ROADMAP.md) for the planned move toward Electrum-style local
 verification.
 
-## Public server
+## Public servers
 
-An independent community server for **TrueNorth mainnet** is available at
-[https://northbound.tncoin.xyz](https://northbound.tncoin.xyz), operated by
-[Ironfist-2000](https://github.com/Ironfist-2000).
-See the [server announcement](https://github.com/nova9/northbound/issues/2#issuecomment-6887701339)
-for details.
+Independent community servers for **TrueNorth mainnet** are listed below.
 
-To connect, open **Security → Server** in the wallet, enter
-`https://northbound.tncoin.xyz` as the **Server URL**, and save.
-The [server trust considerations](#security-and-server-trust) above apply to
-this server as well.
+| Server URL | Operator | Announcement |
+| --- | --- | --- |
+| <https://northbound.tncoin.xyz> | [Ironfist-2000](https://github.com/Ironfist-2000) | [Server announcement](https://github.com/nova9/northbound/issues/2#issuecomment-6887701339) |
+
+To connect, open **Security → Server** in the wallet, paste your chosen URL into
+**Server URL**, and select **Save server**. The wallet checks the server’s network
+and release version using `/info`. If the check reports a mismatch or cannot
+finish, choose **Save anyway** to use that URL. The
+[server trust considerations](#security-and-server-trust) apply to every server listed here.
 
 ## Repository structure
 

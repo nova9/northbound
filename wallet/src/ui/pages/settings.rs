@@ -31,6 +31,15 @@ pub(crate) fn Settings() -> Element {
     let mut server_error = use_signal(|| initial_custom_server.err());
     let mut server_saved = use_signal(|| false);
 
+    let mut pending_check = use_signal(|| None::<dioxus::dioxus_core::Task>);
+    let mut allow_override = use_signal(|| false);
+    let mut clear_check = move || {
+        if let Some(task) = pending_check.write().take() {
+            task.cancel();
+        }
+        allow_override.set(false);
+    };
+
     rsx! {
         section { class: "screen workspace-screen",
             div { class: "page-heading",
@@ -43,6 +52,7 @@ pub(crate) fn Settings() -> Element {
                         class: if active() == tab { "selected" } else { "" },
                         aria_pressed: active() == tab,
                         onclick: move |_| {
+                            clear_check();
                             active.set(tab);
                             backup_verification_visible.set(false);
                             recovery_phrase.write().replace(String::new());
@@ -252,6 +262,7 @@ pub(crate) fn Settings() -> Element {
                                 autocomplete: "url",
                                 value: custom_server_url(),
                                 oninput: move |value| {
+                                    clear_check();
                                     custom_server_url.set(value);
                                     server_error.set(None);
                                     server_saved.set(false);
@@ -264,27 +275,53 @@ pub(crate) fn Settings() -> Element {
                                 button {
                                     class: "button primary",
                                     r#type: "button",
+                                    disabled: pending_check().is_some(),
                                     onclick: move |_| {
-                                        match crate::config::save_custom_api_base_url(&custom_server_url()) {
-                                            Ok(url) => {
-                                                custom_server_url.set(url);
-                                                server_is_custom.set(true);
-                                                server_error.set(None);
-                                                server_saved.set(true);
-                                            }
+                                        let url = match crate::config::validate_and_normalize_api_base_url(&custom_server_url()) {
+                                            Ok(url) => url,
                                             Err(error) => {
                                                 server_error.set(Some(error));
-                                                server_saved.set(false);
+                                                return;
                                             }
-                                        }
+                                        };
+                                        let skip_check = allow_override();
+                                        server_saved.set(false);
+                                        let task = spawn(async move {
+                                            if !skip_check {
+                                                if let Err(warning) = crate::api::check_server_compatibility(&url).await {
+                                                    server_error.set(Some(warning));
+                                                    allow_override.set(true);
+                                                    pending_check.set(None);
+                                                    return;
+                                                }
+                                            }
+                                            match crate::config::save_custom_api_base_url(&url) {
+                                                Ok(url) => {
+                                                    custom_server_url.set(url);
+                                                    server_is_custom.set(true);
+                                                    server_error.set(None);
+                                                    server_saved.set(true);
+                                                }
+                                                Err(error) => {
+                                                    server_error.set(Some(error));
+                                                    server_saved.set(false);
+                                                }
+                                            }
+                                            allow_override.set(false);
+                                            pending_check.set(None);
+                                        });
+                                        pending_check.set(Some(task));
                                     },
-                                    "Save server"
+                                    if pending_check().is_some() { "Checking…" }
+                                    else if allow_override() { "Save anyway" }
+                                    else { "Save server" }
                                 }
                                 button {
                                     class: "button secondary",
                                     r#type: "button",
                                     disabled: !server_is_custom(),
                                     onclick: move |_| {
+                                        clear_check();
                                         match crate::config::reset_api_base_url_to_default() {
                                             Ok(()) => {
                                                 custom_server_url.set(DEFAULT_API_BASE_URL.to_owned());

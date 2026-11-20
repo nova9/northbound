@@ -80,7 +80,7 @@ fn save_and_cache_settings(settings: WalletSettings) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_and_normalize_api_base_url(url: &str) -> Result<String, String> {
+pub(crate) fn validate_and_normalize_api_base_url(url: &str) -> Result<String, String> {
     let normalized_url = url.trim().trim_end_matches('/');
     if normalized_url.is_empty() {
         return Err("Enter the wallet server URL.".to_owned());

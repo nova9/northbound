@@ -30,6 +30,41 @@ fn endpoint(path: &str) -> Result<String, String> {
     Ok(format!("{base_url}{path}"))
 }
 
+pub(crate) async fn check_server_compatibility(base_url: &str) -> Result<(), String> {
+    let response = http_client()?
+        .get(format!("{base_url}/info"))
+        .send()
+        .await
+        .map_err(|_| "Could not reach the server to check compatibility.".to_owned())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "The server returned HTTP {} for /info.",
+            response.status()
+        ));
+    }
+    let info = response.json::<shared::ServerInfo>().await.map_err(|_| {
+        "The server did not provide valid version and network information.".to_owned()
+    })?;
+    let expected_network = match crate::config::WALLET_NETWORK {
+        crate::p2qrh::Network::Mainnet => "main",
+        crate::p2qrh::Network::Regtest => "regtest",
+    };
+    if info.network != expected_network {
+        return Err(format!(
+            "Server network '{}' differs from the expected '{expected_network}'.",
+            info.network
+        ));
+    }
+    let wallet_version = env!("CARGO_PKG_VERSION");
+    if info.version != wallet_version {
+        return Err(format!(
+            "Server version '{}' differs from wallet version '{wallet_version}'. Compatibility is unconfirmed.",
+            info.version
+        ));
+    }
+    Ok(())
+}
+
 pub async fn fetch_chain_height() -> Result<u64, String> {
     let response = http_client()?
         .get(endpoint("/v1/chain/tip")?)
@@ -138,6 +173,31 @@ mod tests {
     use super::*;
     use crate::api::test_support::serve;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn checks_network_and_release_at_the_candidate_server() {
+        let network = if cfg!(feature = "mainnet") {
+            "main"
+        } else {
+            "regtest"
+        };
+        let version = env!("CARGO_PKG_VERSION");
+        for (status, body, compatible) in [
+            (200, json!({"network": network, "version": version}), true),
+            (
+                200,
+                json!({"network": "unknown", "version": version}),
+                false,
+            ),
+            (200, json!({"network": network, "version": "0.1.0"}), false),
+            (200, json!({"version": version}), false),
+            (404, json!({}), false),
+        ] {
+            let (url, server) = serve(1, move |_, _| (status, body.clone()));
+            assert_eq!(check_server_compatibility(&url).await.is_ok(), compatible);
+            assert_eq!(server.join().unwrap(), [json!("GET /info HTTP/1.1")]);
+        }
+    }
 
     #[tokio::test]
     async fn broadcast_rejection_reasons_remain_visible_to_the_wallet() {

@@ -53,13 +53,17 @@ pub fn serve(
                     }
                     None
                 })
-                .unwrap();
+                .unwrap_or(0);
             while bytes.len() < body_start + content_length {
                 let count = stream.read(&mut buffer).unwrap();
                 assert!(count > 0);
                 bytes.extend_from_slice(&buffer[..count]);
             }
-            let request: Value = serde_json::from_slice(&bytes[body_start..]).unwrap();
+            let request: Value = if content_length == 0 {
+                json!(headers.lines().next().unwrap())
+            } else {
+                serde_json::from_slice(&bytes[body_start..]).unwrap()
+            };
             received.push(request.clone());
             let (status, body) = reply(number, request);
             let body = body.to_string();
