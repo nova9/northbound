@@ -1,18 +1,18 @@
 { pkgs, ... }:
 
 let
+  northboundSource = pkgs.fetchFromGitHub {
+    owner = "nova9";
+    repo = "northbound";
+    rev = "64676ebcb7eebfc227f8a42be7af3e4d76d625ee";
+    hash = "sha256-UPHb7RQb35tS+UupjvJJV+5l556ljnF3cFoH+Lq0FdU=";
+  };
+
   northbound-server = pkgs.rustPlatform.buildRustPackage {
     pname = "northbound-server";
-    version = "0.2.0-alpha.2";
-
-    src = pkgs.fetchFromGitHub {
-      owner = "nova9";
-      repo = "northbound";
-      rev = "6cca3a6d3abc36f894aa68a74c98c2d7ccc1b170";
-      hash = "sha256-zy89QA5FAxfiWe3CawKqZrXWhwGvZ2qsPSm4XdwZRy8=";
-    };
-
-    cargoHash = "sha256-8Px6KTw5Chbtpmm06BoCd01JRU6eHtbYrsilkA+mk+w=";
+    version = "0.2.0-alpha.3";
+    src = northboundSource;
+    cargoLock.lockFile = "${northboundSource}/Cargo.lock";
 
     cargoBuildFlags = [
       "-p"
