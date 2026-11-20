@@ -273,7 +273,7 @@ pub(crate) fn Settings() -> Element {
                             }
                             div { class: "actions-row",
                                 button {
-                                    class: "button primary",
+                                    class: if allow_override() { "button danger" } else { "button primary" },
                                     r#type: "button",
                                     disabled: pending_check().is_some(),
                                     onclick: move |_| {
