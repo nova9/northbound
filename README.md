@@ -243,14 +243,18 @@ NORTHBOUND_API_BASE_URL="https://wallet-api.example.com" \
 ## Server deployment
 
 Server deployment uses NixOS. The configuration in
-[`server/devops/app.nix`](server/devops/app.nix) builds the server and installs
+[`server/devops/app.nix`](server/devops/app.nix) installs the GitHub Actions server binary and
 TrueNorth Core, runs both as systemd services, and configures Caddy for HTTPS.
 The chain and index persist in `/var/lib/truenorth` and `/var/lib/northbound`.
 
-Before importing the module into a NixOS host configuration, select the server
-source revision, replace the placeholder source and Cargo hashes, and adjust
-the domain, IP address, and host settings. Keep the daemon RPC on loopback;
-the server reads its local authentication cookie.
+In `server/devops/app.nix`, set `releaseTag`
+to a GitHub release containing `northbound-server-linux-x64`. Set
+`releaseSha256` to the 64-character hex digest from that release’s
+`northbound-server-linux-x64.sha256` asset. On rebuild, Nix fetches the binary
+directly from the tagged release and verifies its hash before installing it.
+Update both settings together when upgrading. Adjust the domain, IP address and host
+settings before rebuilding. The daemon RPC listens on loopback and the server
+reads its local authentication cookie.
 
 ## Project status
 

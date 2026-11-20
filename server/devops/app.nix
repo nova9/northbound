@@ -1,42 +1,22 @@
 { pkgs, ... }:
 
 let
-  northboundSource = pkgs.fetchFromGitHub {
-    owner = "nova9";
-    repo = "northbound";
-    rev = "64676ebcb7eebfc227f8a42be7af3e4d76d625ee";
-    hash = "sha256-UPHb7RQb35tS+UupjvJJV+5l556ljnF3cFoH+Lq0FdU=";
-  };
+  releaseTag = "v0.2.0-alpha.3";
+  releaseSha256 = pkgs.lib.fakeSha256;
 
-  northbound-server = pkgs.rustPlatform.buildRustPackage {
-    pname = "northbound-server";
-    version = "0.2.0-alpha.3";
-    src = northboundSource;
-    cargoLock.lockFile = "${northboundSource}/Cargo.lock";
+  northbound-server = pkgs.stdenv.mkDerivation {
+    name = "northbound-server";
+    src = pkgs.fetchurl {
+      url = "https://github.com/nova9/northbound/releases/download/${releaseTag}/northbound-server-linux-x64";
+      sha256 = releaseSha256;
+    };
+    dontUnpack = true;
+    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl ];
 
-    cargoBuildFlags = [
-      "-p"
-      "server"
-    ];
-    cargoTestFlags = [
-      "-p"
-      "server"
-    ];
-    cargoInstallFlags = [
-      "-p"
-      "server"
-    ];
-
-    nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.openssl ];
-
-    # Reqwest initializes its TLS verifier even for local HTTP tests.
-    SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-
-    CARGO_BUILD_JOBS = "1";
-    CARGO_PROFILE_RELEASE_OPT_LEVEL = "0";
-    CARGO_PROFILE_RELEASE_LTO = "false";
-    CARGO_PROFILE_RELEASE_DEBUG = "0";
+    installPhase = ''
+      install -Dm755 "$src" "$out/bin/server"
+    '';
   };
 
   truenorth = pkgs.stdenv.mkDerivation {

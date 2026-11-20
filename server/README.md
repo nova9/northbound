@@ -190,9 +190,8 @@ services and configures Caddy for HTTPS. The server stores its index in an owned
 the writer lock does not provide a distributed deployment mode. Use `/ready`
 to check index readiness.
 
-Before deployment, select the server source revision, replace the placeholder
-source and Cargo hashes, and adjust the domain, IP address, and host settings.
-The module manages deployment versions independently of local development.
+Follow the [server deployment instructions](../README.md#server-deployment)
+to pin the GitHub release tag and checksum. Nix downloads and verifies the binary.
 Daemon RPC stays on loopback, with cookie access granted to the server's user.
 
 Run the complete HTTP integration test with an isolated node and database:
