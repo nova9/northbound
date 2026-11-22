@@ -10,61 +10,6 @@ let
   releaseTag = "v0.2.0-alpha.4";
   releaseSha256 = "sha256-pvmx8hvf3gl4TnhGjpD+zRVYVKMIpfxE2uk2bn8kne8=";
 
-  # Shared Caddy rate-limiting and reverse-proxy config for both the domain
-  # and legacy IP virtual hosts. Keeps /ready exempt and gives mining its own budget.
-  proxyConfig = ''
-    rate_limit {
-      # Wallet & chain API (excludes /ready health probes and /v1/mining/*)
-      zone wallet_per_ip {
-        match {
-          not path /ready /v1/mining/*
-        }
-        key {remote_host}
-        events 30
-        window 1s
-      }
-
-      zone wallet_global {
-        match {
-          not path /ready /v1/mining/*
-        }
-        key static
-        events 300
-        window 1s
-      }
-
-      # Solo-mining API (separate budget from wallet traffic)
-      zone mining_per_ip {
-        match {
-          path /v1/mining/*
-        }
-        key {remote_host}
-        events 10
-        window 1s
-      }
-
-      zone mining_global {
-        match {
-          path /v1/mining/*
-        }
-        key static
-        events 100
-        window 1s
-      }
-    }
-
-    handle_errors {
-      @429 expression {err.status_code} == 429
-      handle @429 {
-        header Content-Type application/json
-        header Cache-Control no-store
-        respond `{"message":"Too many requests; retry shortly."}` 429
-      }
-    }
-
-    reverse_proxy 127.0.0.1:3000
-  '';
-
   # Prebuilt Northbound server binary from GitHub Releases.
   # autoPatchelfHook rewrites its dynamic linker and shared library paths for NixOS.
   northbound-server = pkgs.stdenv.mkDerivation {
@@ -240,25 +185,42 @@ in
       hash = lib.fakeHash;
     };
 
-    # Keep the IP endpoint available for existing wallet releases.
-    # IP clients omit SNI; EC2 exposes a private address to Caddy locally.
     globalConfig = ''
       order rate_limit before reverse_proxy
-      default_sni 13.55.12.147
     '';
 
-    virtualHosts."api.northboundwallet.org".extraConfig = proxyConfig;
+    virtualHosts."api.northboundwallet.org".extraConfig = ''
+      rate_limit {
+        # Apply to all API routes except /ready health probes.
+        zone api_per_ip {
+          match {
+            not path /ready
+          }
+          key {remote_host}
+          events 30
+          window 1s
+        }
 
-    # Let's Encrypt issues IP certificates only under the shortlived profile.
-    virtualHosts."https://13.55.12.147".extraConfig = ''
-      tls {
-        issuer acme {
-          dir https://acme-v02.api.letsencrypt.org/directory
-          profile shortlived
+        zone api_global {
+          match {
+            not path /ready
+          }
+          key static
+          events 300
+          window 1s
         }
       }
 
-      ${proxyConfig}
+      handle_errors {
+        @429 expression {err.status_code} == 429
+        handle @429 {
+          header Content-Type application/json
+          header Cache-Control no-store
+          respond `{"message":"Too many requests; retry shortly."}` 429
+        }
+      }
+
+      reverse_proxy 127.0.0.1:3000
     '';
   };
 
