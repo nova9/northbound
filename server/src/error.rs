@@ -1,17 +1,21 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use shared::ApiErrorResponse;
 
+/// Ensures every error response uses our JSON `{"message": "..."}` format
+/// (including Axum's own 400/413/415/422 rejections) and disables HTTP caching.
 pub(crate) async fn format_response(mut response: Response) -> Response {
     let status = response.status();
+    let is_error = status.is_client_error() || status.is_server_error();
     let is_json = response
         .headers()
-        .get(axum::http::header::CONTENT_TYPE)
+        .get(header::CONTENT_TYPE)
         .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
-    if (status.is_client_error() || status.is_server_error()) && !is_json {
+
+    if is_error && !is_json {
         let message = match status {
             StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
                 "Request must contain valid JSON with the required fields."
@@ -20,17 +24,12 @@ pub(crate) async fn format_response(mut response: Response) -> Response {
             StatusCode::PAYLOAD_TOO_LARGE => "Request exceeds the configured body limit.",
             _ => "Request could not be served.",
         };
-        response = (
-            status,
-            Json(ApiErrorResponse {
-                message: message.into(),
-            }),
-        )
-            .into_response();
+        response = json_error_response(status, message);
     }
+
     response.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
     );
     response
 }
@@ -41,40 +40,16 @@ pub(crate) struct ApiError {
 }
 
 impl ApiError {
-    pub fn from_broadcast_error(error: truenorth_rpc::Error) -> Self {
-        if let truenorth_rpc::Error::Remote {
-            method,
-            code,
-            message,
-        } = &error
-        {
-            if method == "sendrawtransaction" {
-                // Only transaction rejection codes expose the daemon's reason.
-                let status = match code {
-                    -25 | -26
-                        if message == "bad-txns-inputs-missingorspent"
-                            || message == "txn-mempool-conflict" =>
-                    {
-                        Some(StatusCode::CONFLICT)
-                    }
-                    -22 | -25 | -26 => Some(StatusCode::BAD_REQUEST),
-                    -27 => Some(StatusCode::CONFLICT),
-                    _ => None,
-                };
-                if let Some(status) = status {
-                    return Self {
-                        status,
-                        message: message.clone(),
-                    };
-                }
-            }
-        }
-        Self::from(error)
-    }
-
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }
@@ -85,17 +60,50 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    /// Maps `sendrawtransaction` rejections to client-visible 400/409 errors.
+    /// Any other RPC failure stays a generic 502 so node internals stay private.
+    pub fn from_broadcast_error(error: truenorth_rpc::Error) -> Self {
+        let truenorth_rpc::Error::Remote {
+            method,
+            code,
+            message,
+        } = &error
+        else {
+            return Self::from(error);
+        };
+
+        if method != "sendrawtransaction" {
+            return Self::from(error);
+        }
+
+        // TrueNorth Core RPC error codes for sendrawtransaction:
+        // -22: transaction decode failed
+        // -25: missing/invalid inputs
+        // -26: rejected by mempool policy
+        // -27: transaction already in chain
+        let status = match code {
+            -25 | -26
+                if message == "bad-txns-inputs-missingorspent"
+                    || message == "txn-mempool-conflict" =>
+            {
+                StatusCode::CONFLICT
+            }
+            -22 | -25 | -26 => StatusCode::BAD_REQUEST,
+            -27 => StatusCode::CONFLICT,
+            _ => return Self::from(error),
+        };
+
+        Self {
+            status,
+            message: message.clone(),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(ApiErrorResponse {
-                message: self.message,
-            }),
-        )
-            .into_response()
+        json_error_response(self.status, self.message)
     }
 }
 
@@ -104,10 +112,9 @@ impl From<indexer::Error> for ApiError {
         match error {
             indexer::Error::InvalidRequest(message) => Self::bad_request(message),
             indexer::Error::Unavailable(message) => Self::unavailable(message),
-            indexer::Error::CursorChanged => Self {
-                status: StatusCode::CONFLICT,
-                message: "The index changed; restart pagination.".into(),
-            },
+            indexer::Error::CursorChanged => {
+                Self::conflict("The index changed; restart pagination.")
+            }
             error => {
                 eprintln!("Index query failed: {error}");
                 Self {
@@ -127,4 +134,14 @@ impl From<truenorth_rpc::Error> for ApiError {
             message: "The blockchain node is unavailable or returned an invalid response.".into(),
         }
     }
+}
+
+fn json_error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    (
+        status,
+        Json(ApiErrorResponse {
+            message: message.into(),
+        }),
+    )
+        .into_response()
 }

@@ -1,26 +1,35 @@
-//! Optional solo-mining HTTP API, independent of wallet state and index queries.
-mod routes;
+//! Optional solo-mining HTTP API, kept completely separate from wallet state
+//! and index queries so it can be enabled or removed independently.
+
 mod templates;
 
-use std::{env, num::NonZeroU32, sync::Arc};
+use std::fmt::Write;
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
-    Router,
-    extract::DefaultBodyLimit,
-    middleware,
+    Json, Router,
+    extract::{DefaultBodyLimit, Query, Request, State},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
 };
+use serde::Deserialize;
+use serde_json::{Value, json};
 use tokio::sync::{Semaphore, watch};
-use truenorth_rpc::{MAX_BLOCK_HEX_LENGTH, NodeClient};
+use truenorth_rpc::{Error, MAX_BLOCK_HEX_LENGTH, NodeClient, validate_block_hex};
 
-use crate::{error, rate_limit};
-use templates::CachedTemplate;
+use crate::{error, error::ApiError};
+use templates::{CachedTemplate, wait_for_template};
 
 pub use templates::run_template_watcher;
 
 const MAX_TEMPLATE_CLIENTS: usize = 256;
 const MAX_HASH_REQUESTS: usize = 8;
 const MAX_SUBMISSIONS: usize = 1;
+const MAX_LONGPOLL_ID_LENGTH: usize = 128;
+const SUBMISSION_TIMEOUT: Duration = Duration::from_secs(30);
+const SUBMISSION_JSON_OVERHEAD_BYTES: usize = 1024;
 
 pub struct MiningState {
     node: NodeClient,
@@ -43,59 +52,170 @@ impl MiningState {
     }
 }
 
-pub struct MiningConfig {
-    pub enabled: bool,
-    pub requests_per_second: NonZeroU32,
+pub fn build_router(state: Arc<MiningState>) -> Router {
+    // Block submission gets its own concurrency gate and body limit so a busy
+    // or slow upload is rejected before buffering megabytes of JSON.
+    let submission_routes = Router::new()
+        .route("/blocks", post(submit_block))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            limit_submissions,
+        ))
+        .layer(DefaultBodyLimit::max(
+            MAX_BLOCK_HEX_LENGTH + SUBMISSION_JSON_OVERHEAD_BYTES,
+        ));
+
+    let mining_routes = Router::new()
+        .route("/template", get(block_template))
+        .route("/block-hash", get(block_hash))
+        .merge(submission_routes)
+        .with_state(state);
+
+    Router::new()
+        .nest("/v1/mining", mining_routes)
+        .layer(middleware::map_response(error::format_response))
 }
 
-impl MiningConfig {
-    pub fn from_environment() -> Result<Self, String> {
-        let enabled = match env::var("TRUENORTH_MINING_ENABLED") {
-            Err(env::VarError::NotPresent) => Ok(true),
-            Ok(value) if value == "true" => Ok(true),
-            Ok(value) if value == "false" => Ok(false),
-            _ => Err("TRUENORTH_MINING_ENABLED must be 'true' or 'false'".to_owned()),
-        }?;
-        let requests_per_second = env::var("TRUENORTH_MINING_REQUESTS_PER_SECOND")
-            .unwrap_or_else(|_| "100".into())
-            .parse::<NonZeroU32>()
-            .map_err(|_| {
-                "TRUENORTH_MINING_REQUESTS_PER_SECOND must be a positive 32-bit integer".to_owned()
-            })?;
-        Ok(Self {
-            enabled,
-            requests_per_second,
+// --- Handlers ---
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TemplateQuery {
+    longpollid: Option<String>,
+}
+
+async fn block_template(
+    State(state): State<Arc<MiningState>>,
+    Query(query): Query<TemplateQuery>,
+) -> Result<Response, ApiError> {
+    if let Some(id) = &query.longpollid {
+        validate_longpoll_id(id)?;
+    }
+
+    let _permit = state
+        .template_clients
+        .try_acquire()
+        .map_err(|_| ApiError::unavailable("Too many mining clients; retry shortly."))?;
+
+    wait_for_template(&state, query.longpollid.as_deref()).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HashQuery {
+    height: u32,
+}
+
+async fn block_hash(
+    State(state): State<Arc<MiningState>>,
+    Query(query): Query<HashQuery>,
+) -> Result<Json<Value>, ApiError> {
+    // TrueNorth Core block heights are signed 32-bit integers.
+    if query.height > i32::MAX as u32 {
+        return Err(ApiError::bad_request("height exceeds the supported range."));
+    }
+
+    let _permit = state
+        .hash_requests
+        .try_acquire()
+        .map_err(|_| ApiError::unavailable("Mining block lookups are busy; retry shortly."))?;
+
+    let hash = match state.node.fetch_block_hash(i64::from(query.height)).await {
+        Ok(hash) => hash,
+        Err(Error::Remote { code: -8, .. }) => {
+            return Err(ApiError::bad_request("Block height is not available."));
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    Ok(Json(json!({
+        "height": query.height,
+        "hash": encode_hex(&hash),
+    })))
+}
+
+async fn limit_submissions(
+    State(state): State<Arc<MiningState>>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let _permit = state
+        .submissions
+        .try_acquire()
+        .map_err(|_| ApiError::unavailable("Block submission is busy; retry shortly."))?;
+
+    // Bound slow uploads as well as node validation so one client cannot hold
+    // the only submission slot indefinitely.
+    tokio::time::timeout(SUBMISSION_TIMEOUT, next.run(request))
+        .await
+        .map_err(|_| {
+            ApiError::unavailable("Block submission timed out; check block status before retrying.")
         })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlockRequest {
+    block_hex: String,
+}
+
+async fn submit_block(
+    State(state): State<Arc<MiningState>>,
+    Json(request): Json<BlockRequest>,
+) -> Result<Json<Value>, ApiError> {
+    validate_block_hex(&request.block_hex)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+
+    let result = match state.node.submit_block(&request.block_hex).await {
+        Ok(result) => result,
+        Err(Error::Remote { code: -22, .. }) => {
+            return Err(ApiError::bad_request(
+                "The node could not decode the submitted block.",
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let status = classify_submit_result(result.as_deref());
+    Ok(Json(json!({"status": status, "result": result})))
+}
+
+fn validate_longpoll_id(id: &str) -> Result<(), ApiError> {
+    let is_valid = !id.is_empty()
+        && id.len() <= MAX_LONGPOLL_ID_LENGTH
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric());
+
+    if !is_valid {
+        return Err(ApiError::bad_request(
+            "longpollid must contain 1 to 128 ASCII letters or digits.",
+        ));
+    }
+
+    Ok(())
+}
+
+fn classify_submit_result(result: Option<&str>) -> &'static str {
+    match result {
+        None => "accepted",
+        Some("duplicate") => "duplicate",
+        Some("inconclusive" | "duplicate-inconclusive") => "inconclusive",
+        Some(_) => "rejected",
     }
 }
 
-pub fn build_router(state: Arc<MiningState>, requests_per_second: NonZeroU32) -> Router {
-    let rate_limit = Arc::new(rate_limit::RateLimit::new(requests_per_second));
-    let submissions = Router::new()
-        .route("/blocks", post(routes::submit_block))
-        // Acquire the submission slot before buffering a potentially large JSON body.
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            routes::limit_submissions,
-        ))
-        .layer(DefaultBodyLimit::max(MAX_BLOCK_HEX_LENGTH + 1024));
-    let routes = Router::new()
-        .route("/template", get(routes::block_template))
-        .route("/block-hash", get(routes::block_hash))
-        .merge(submissions)
-        .layer(middleware::from_fn_with_state(
-            rate_limit,
-            rate_limit::limit_request_rate,
-        ))
-        .with_state(state);
-    Router::new()
-        .nest("/v1/mining", routes)
-        .layer(middleware::map_response(error::format_response))
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -103,13 +223,16 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    fn state() -> Arc<MiningState> {
-        Arc::new(MiningState::new(
-            NodeClient::new("http://127.0.0.1:1", "unused-cookie".into(), "regtest").unwrap(),
-        ))
+    use super::*;
+    use crate::test_support::RpcFixture;
+
+    fn offline_state() -> Arc<MiningState> {
+        let node =
+            NodeClient::new("http://127.0.0.1:1", "unused-cookie".into(), "regtest").unwrap();
+        Arc::new(MiningState::new(node))
     }
 
-    fn request(method: &str, path: &str, body: String) -> Request<Body> {
+    fn json_request(method: &str, path: &str, body: String) -> Request<Body> {
         Request::builder()
             .method(method)
             .uri(path)
@@ -120,8 +243,8 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_inputs_are_rejected_before_contacting_the_node() {
-        let router = build_router(state(), NonZeroU32::new(100).unwrap());
-        for (method, path, body, expected) in [
+        let router = build_router(offline_state());
+        let cases = [
             (
                 "GET",
                 "/v1/mining/block-hash?height=-1",
@@ -164,14 +287,18 @@ mod tests {
                 json!({"block_hex": "00".repeat(MAX_BLOCK_HEX_LENGTH / 2 + 1024)}).to_string(),
                 StatusCode::PAYLOAD_TOO_LARGE,
             ),
-        ] {
+        ];
+
+        for (method, path, body, expected_status) in cases {
             let response = router
                 .clone()
-                .oneshot(request(method, path, body))
+                .oneshot(json_request(method, path, body))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), expected, "{path}");
+
+            assert_eq!(response.status(), expected_status, "{path}");
             assert_eq!(response.headers()["cache-control"], "no-store");
+
             let body = axum::body::to_bytes(response.into_body(), 1024)
                 .await
                 .unwrap();
@@ -180,42 +307,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mining_limits_are_independent_and_busy_submissions_are_not_buffered() {
-        let state = state();
-        let wallet = crate::build_router(
-            Arc::new(crate::AppState::new(
-                state.node.clone(),
-                "unused.sqlite".into(),
-                "regtest".into(),
-            )),
-            NonZeroU32::new(1).unwrap(),
-        );
-        let router = wallet.merge(build_router(state.clone(), NonZeroU32::new(1).unwrap()));
-        let permit = state.submissions.acquire().await.unwrap();
+    async fn busy_submissions_are_rejected_without_buffering_the_body() {
+        let mining_state = offline_state();
+        let router = build_router(mining_state.clone());
+
+        // A busy submission returns 503 before parsing the invalid JSON body.
+        let permit = mining_state.submissions.acquire().await.unwrap();
         let response = router
-            .clone()
-            .oneshot(request("POST", "/v1/mining/blocks", "{".into()))
+            .oneshot(json_request("POST", "/v1/mining/blocks", "{".into()))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         drop(permit);
-        let response = router
-            .clone()
-            .oneshot(request("GET", "/v1/mining/template", String::new()))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        let response = router
-            .oneshot(request("GET", "/info", String::new()))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn exhausted_template_and_hash_capacity_returns_without_node_work() {
-        let state = state();
-        let router = build_router(state.clone(), NonZeroU32::new(100).unwrap());
+        let state = offline_state();
+        let router = build_router(state.clone());
+
         let template_slots = state
             .template_clients
             .acquire_many(MAX_TEMPLATE_CLIENTS as u32)
@@ -226,14 +336,16 @@ mod tests {
             .acquire_many(MAX_HASH_REQUESTS as u32)
             .await
             .unwrap();
+
         for path in ["/v1/mining/template", "/v1/mining/block-hash?height=0"] {
             let response = router
                 .clone()
-                .oneshot(request("GET", path, String::new()))
+                .oneshot(json_request("GET", path, String::new()))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         }
+
         drop(template_slots);
         drop(hash_slots);
         assert_eq!(
@@ -245,8 +357,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn stalled_submission_times_out_and_releases_its_slot() {
-        use std::time::Duration;
-        let state = state();
+        let state = offline_state();
         let router = Router::new()
             .route(
                 "/blocks",
@@ -257,23 +368,23 @@ mod tests {
             )
             .route_layer(middleware::from_fn_with_state(
                 state.clone(),
-                routes::limit_submissions,
+                limit_submissions,
             ));
+
         let started = tokio::time::Instant::now();
         let response = router
-            .oneshot(request("POST", "/blocks", String::new()))
+            .oneshot(json_request("POST", "/blocks", String::new()))
             .await
             .unwrap();
+
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(started.elapsed(), Duration::from_secs(30));
+        assert_eq!(started.elapsed(), SUBMISSION_TIMEOUT);
         assert_eq!(state.submissions.available_permits(), MAX_SUBMISSIONS);
     }
 
     #[tokio::test]
     async fn daemon_submission_results_and_failures_remain_distinct() {
-        use axum::{Json, extract::State};
-        use tokio::sync::Mutex;
-        let results = Arc::new(Mutex::new(std::collections::VecDeque::from([
+        let replies = Arc::new(Mutex::new(VecDeque::from([
             json!({"result": null, "error": null}),
             json!({"result": "duplicate", "error": null}),
             json!({"result": "bad-cb-amount", "error": null}),
@@ -285,36 +396,23 @@ mod tests {
             json!({"result": 42, "error": null}),
             json!({"result": null, "error": null}),
         ])));
-        let rpc = Router::new()
-            .route(
-                "/",
-                post(
-                    |State(results): State<Arc<Mutex<std::collections::VecDeque<Value>>>>,
-                     Json(request): Json<Value>| async move {
-                        assert!(matches!(
-                            request["method"].as_str(),
-                            Some("submitblock" | "getblockchaininfo")
-                        ));
-                        let mut result = results.lock().await.pop_front().unwrap();
-                        result["id"] = request["id"].clone();
-                        result["jsonrpc"] = json!("2.0");
-                        Json(result)
-                    },
-                ),
-            )
-            .with_state(results);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let rpc_task = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
-        let directory = tempfile::tempdir().unwrap();
-        let cookie = directory.path().join(".cookie");
-        std::fs::write(&cookie, "test:password").unwrap();
-        let state = Arc::new(MiningState::new(
-            NodeClient::new(&url, cookie, "regtest").unwrap(),
-        ));
-        let node = state.node.clone();
-        let router = build_router(state, NonZeroU32::new(100).unwrap());
-        for (http_status, status, result) in [
+
+        let fixture = RpcFixture::new("regtest", move |rpc| {
+            assert!(matches!(
+                rpc["method"].as_str(),
+                Some("submitblock" | "getblockchaininfo")
+            ));
+            let mut reply = replies.lock().unwrap().pop_front().unwrap();
+            reply["id"] = rpc["id"].clone();
+            reply["jsonrpc"] = json!("2.0");
+            (200, reply)
+        })
+        .await;
+
+        let state = Arc::new(MiningState::new(fixture.node.clone()));
+        let router = build_router(state);
+
+        let expected_outcomes = [
             (200, "accepted", Value::Null),
             (200, "duplicate", json!("duplicate")),
             (200, "rejected", json!("bad-cb-amount")),
@@ -324,32 +422,39 @@ mod tests {
             (400, "", Value::Null),
             (502, "", Value::Null),
             (502, "", Value::Null),
-        ] {
+        ];
+
+        for (expected_http, expected_status, expected_result) in expected_outcomes {
             let response = router
                 .clone()
-                .oneshot(request(
+                .oneshot(json_request(
                     "POST",
                     "/v1/mining/blocks",
                     json!({"block_hex": "00".repeat(81)}).to_string(),
                 ))
                 .await
                 .unwrap();
-            assert_eq!(response.status().as_u16(), http_status);
+
+            assert_eq!(response.status().as_u16(), expected_http);
             let body = axum::body::to_bytes(response.into_body(), 4096)
                 .await
                 .unwrap();
             let value: Value = serde_json::from_slice(&body).unwrap();
-            if http_status == 200 {
-                assert_eq!(value, json!({"status": status, "result": result}));
+
+            if expected_http == 200 {
+                assert_eq!(
+                    value,
+                    json!({"status": expected_status, "result": expected_result})
+                );
             } else {
                 assert!(value["message"].is_string());
             }
         }
-        // Null is a success only for submitblock; existing RPC calls remain strict.
+
+        // A JSON `null` result is only valid for `submitblock`; other RPC calls remain strict.
         assert!(matches!(
-            node.fetch_tip().await,
+            fixture.node.fetch_tip().await,
             Err(truenorth_rpc::Error::InvalidData(_))
         ));
-        rpc_task.abort();
     }
 }

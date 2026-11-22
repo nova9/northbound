@@ -40,7 +40,6 @@ async fn indexed_api_handles_pending_spends_replacements_reorgs_and_restart() {
             Command::new(env!("CARGO_BIN_EXE_server"))
                 .env("TRUENORTH_NETWORK", "regtest")
                 .env("TRUENORTH_MINING_ENABLED", mining_enabled.to_string())
-                .env("TRUENORTH_MINING_REQUESTS_PER_SECOND", "100")
                 .env(
                     "TRUENORTH_RPC_URL",
                     format!(

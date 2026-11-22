@@ -1,9 +1,72 @@
-{ pkgs, ... }:
+# NixOS module for the production Northbound server on AWS EC2.
+# Deploys three components on one host:
+#   1. truenorthd  — unpruned TrueNorth mainnet full node (loopback RPC only)
+#   2. northbound  — wallet & solo-mining HTTP API + SQLite indexer (127.0.0.1:3000)
+#   3. caddy       — HTTPS reverse proxy terminating TLS for public traffic
+{ pkgs, lib, ... }:
 
 let
+  # Update both values together when deploying a new Northbound release.
   releaseTag = "v0.2.0-alpha.4";
   releaseSha256 = "sha256-pvmx8hvf3gl4TnhGjpD+zRVYVKMIpfxE2uk2bn8kne8=";
 
+  # Shared Caddy rate-limiting and reverse-proxy config for both the domain
+  # and legacy IP virtual hosts. Keeps /ready exempt and gives mining its own budget.
+  proxyConfig = ''
+    rate_limit {
+      # Wallet & chain API (excludes /ready health probes and /v1/mining/*)
+      zone wallet_per_ip {
+        match {
+          not path /ready /v1/mining/*
+        }
+        key {remote_host}
+        events 30
+        window 1s
+      }
+
+      zone wallet_global {
+        match {
+          not path /ready /v1/mining/*
+        }
+        key static
+        events 300
+        window 1s
+      }
+
+      # Solo-mining API (separate budget from wallet traffic)
+      zone mining_per_ip {
+        match {
+          path /v1/mining/*
+        }
+        key {remote_host}
+        events 10
+        window 1s
+      }
+
+      zone mining_global {
+        match {
+          path /v1/mining/*
+        }
+        key static
+        events 100
+        window 1s
+      }
+    }
+
+    handle_errors {
+      @429 expression {err.status_code} == 429
+      handle @429 {
+        header Content-Type application/json
+        header Cache-Control no-store
+        respond `{"message":"Too many requests; retry shortly."}` 429
+      }
+    }
+
+    reverse_proxy 127.0.0.1:3000
+  '';
+
+  # Prebuilt Northbound server binary from GitHub Releases.
+  # autoPatchelfHook rewrites its dynamic linker and shared library paths for NixOS.
   northbound-server = pkgs.stdenv.mkDerivation {
     name = "northbound-server";
     src = pkgs.fetchurl {
@@ -12,13 +75,17 @@ let
     };
     dontUnpack = true;
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl ];
+    buildInputs = [
+      pkgs.stdenv.cc.cc.lib
+      pkgs.openssl
+    ];
 
     installPhase = ''
       install -Dm755 "$src" "$out/bin/server"
     '';
   };
 
+  # Prebuilt TrueNorth Core release binaries (daemon, CLI, and miner).
   truenorth = pkgs.stdenv.mkDerivation {
     pname = "truenorth";
     version = "30.5.5";
@@ -30,6 +97,7 @@ let
 
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
 
+    # Shared libraries linked by the prebuilt TrueNorth Core binaries.
     buildInputs = with pkgs; [
       stdenv.cc.cc.lib
       openssl
@@ -60,6 +128,7 @@ let
 
 in
 {
+  # 4 GiB swap file as memory headroom during initial block download and indexing.
   swapDevices = [
     {
       device = "/var/lib/swapfile";
@@ -67,6 +136,7 @@ in
     }
   ];
 
+  # Expose binaries on PATH for administrative commands (e.g. truenorth-cli, nixfmt).
   environment.systemPackages = [
     northbound-server
     truenorth
@@ -85,6 +155,7 @@ in
     '';
   };
 
+  # Separate unprivileged system accounts for the node and API server.
   users.groups.truenorth = { };
   users.groups.northbound = { };
 
@@ -96,6 +167,7 @@ in
   users.users.northbound = {
     isSystemUser = true;
     group = "northbound";
+    # Group membership grants read-only access to /var/lib/truenorth/.cookie.
     extraGroups = [ "truenorth" ];
   };
 
@@ -109,11 +181,18 @@ in
       User = "truenorth";
       Group = "truenorth";
 
+      # Key flags:
+      # -prune=0: the Northbound indexer requires full historical blocks.
+      # -rpcbind / -rpcallowip: keep daemon RPC strictly on loopback.
+      # -rpccookieperms=group: allow the northbound user to authenticate via cookie.
+      # -txindex=1: required for /v1/transactions/status fallback lookups.
       ExecStart = "${truenorth}/bin/truenorthd -chain=main -datadir=/var/lib/truenorth -printtoconsole -server=1 -prune=0 -rpcbind=127.0.0.1 -rpcallowip=127.0.0.1 -rpccookiefile=/var/lib/truenorth/.cookie -rpccookieperms=group -blockfilterindex=1 -txindex=1";
 
       Restart = "on-failure";
       RestartSec = 10;
 
+      # Creates /var/lib/truenorth owned by truenorth:truenorth; 0710 lets the
+      # northbound user traverse into the directory to read the RPC cookie.
       StateDirectory = "truenorth";
       StateDirectoryMode = "0710";
     };
@@ -130,9 +209,7 @@ in
       TRUENORTH_RPC_URL = "http://127.0.0.1:9554";
       TRUENORTH_RPC_COOKIE_PATH = "/var/lib/truenorth/.cookie";
       TRUENORTH_INDEX_DATABASE = "/var/lib/northbound/chain.sqlite";
-      TRUENORTH_SERVER_REQUESTS_PER_SECOND = "300";
       TRUENORTH_MINING_ENABLED = "true";
-      TRUENORTH_MINING_REQUESTS_PER_SECOND = "100";
     };
 
     serviceConfig = {
@@ -140,27 +217,39 @@ in
       Group = "northbound";
 
       ExecStart = "${northbound-server}/bin/server";
+      # Private /var/lib/northbound directory for the SQLite index database.
       StateDirectory = "northbound";
       StateDirectoryMode = "0700";
+      # Retry automatically while truenorthd finishes starting up or creating its cookie.
       Restart = "always";
       RestartSec = 5;
     };
   };
 
+  # Enables shell access via AWS Systems Manager (Session Manager) without opening SSH.
   services.amazon-ssm-agent.enable = true;
 
+  # Public HTTPS reverse proxy with sliding-window rate limiting.
   services.caddy = {
     enable = true;
-    virtualHosts."api.northboundwallet.org".extraConfig = ''
-      reverse_proxy 127.0.0.1:3000
-    '';
+
+    # Stock Caddy does not bundle rate limiting; build with the caddy-ratelimit plugin.
+    # Run `nixos-rebuild switch` once and replace `lib.fakeHash` with the hash Nix reports.
+    package = pkgs.caddy.withPlugins {
+      plugins = [ "github.com/mholt/caddy-ratelimit@v0.1.0" ];
+      hash = lib.fakeHash;
+    };
 
     # Keep the IP endpoint available for existing wallet releases.
     # IP clients omit SNI; EC2 exposes a private address to Caddy locally.
     globalConfig = ''
+      order rate_limit before reverse_proxy
       default_sni 13.55.12.147
     '';
 
+    virtualHosts."api.northboundwallet.org".extraConfig = proxyConfig;
+
+    # Let's Encrypt issues IP certificates only under the shortlived profile.
     virtualHosts."https://13.55.12.147".extraConfig = ''
       tls {
         issuer acme {
@@ -169,13 +258,14 @@ in
         }
       }
 
-      reverse_proxy 127.0.0.1:3000
+      ${proxyConfig}
     '';
   };
 
+  # Public ports only — daemon RPC (9554) and Northbound HTTP (3000) stay loopback-only.
   networking.firewall.allowedTCPPorts = [
-    80
-    443
-    9555
+    80 # HTTP (ACME challenges and HTTPS redirects)
+    443 # HTTPS (Caddy -> Northbound API)
+    9555 # TrueNorth P2P network
   ];
 }

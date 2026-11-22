@@ -1,7 +1,8 @@
-use std::num::NonZeroU32;
+//! Shared mock RPC server fixture used by unit tests across `server`.
+
 use std::sync::Arc;
 
-use axum::{Json, Router, body::Body, http::Request, routing::post};
+use axum::{Json, Router, body::Body, http::Request, http::StatusCode, routing::post};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use truenorth_rpc::NodeClient;
@@ -41,16 +42,19 @@ impl RpcFixture {
             "/",
             post(move |Json(request): Json<Value>| {
                 let (status, body) = reply(request);
-                async move { (axum::http::StatusCode::from_u16(status).unwrap(), body) }
+                async move { (StatusCode::from_u16(status).unwrap(), body) }
             }),
         );
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+
         let directory = tempfile::tempdir().unwrap();
         let cookie = directory.path().join(".cookie");
         std::fs::write(&cookie, "test:password").unwrap();
         let node = NodeClient::new(&url, cookie, network).unwrap();
+
         Self {
             node,
             directory,
@@ -63,14 +67,11 @@ impl RpcFixture {
     }
 
     pub fn router(&self, network: &str) -> Router {
-        crate::build_router(
-            Arc::new(AppState::new(
-                self.node.clone(),
-                self.directory.path().join("chain.sqlite"),
-                network.into(),
-            )),
-            NonZeroU32::new(100).unwrap(),
-        )
+        crate::build_router(Arc::new(AppState::new(
+            self.node.clone(),
+            self.directory.path().join("chain.sqlite"),
+            network.into(),
+        )))
     }
 
     pub fn create_ready_index(&self) -> indexer::IndexDatabase {
@@ -80,16 +81,23 @@ impl RpcFixture {
             [1; 32],
         )
         .unwrap();
-        let block = truenorth_rpc::decode_block(
+
+        let genesis_block = truenorth_rpc::decode_block(
             &json!({
-                "hash": "01".repeat(32), "height": 0, "time": 1,
-                "tx": [{"txid": "02".repeat(32), "vin": [{"coinbase": "00"}],
-                    "vout": [{"n": 0, "value": 512, "scriptPubKey": {"hex": "51"}}]}]
+                "hash": "01".repeat(32),
+                "height": 0,
+                "time": 1,
+                "tx": [{
+                    "txid": "02".repeat(32),
+                    "vin": [{"coinbase": "00"}],
+                    "vout": [{"n": 0, "value": 512, "scriptPubKey": {"hex": "51"}}]
+                }]
             })
             .to_string(),
         )
         .unwrap();
-        database.apply_block(&block).unwrap();
+
+        database.apply_block(&genesis_block).unwrap();
         database
             .publish_mempool_snapshot(&database.tip().unwrap().unwrap(), 1, &[])
             .unwrap();
@@ -106,9 +114,12 @@ pub fn rejection(code: i64, message: &str) -> Value {
 }
 
 pub fn tip(network: &str) -> Value {
-    result(
-        json!({"chain": network, "blocks": 12, "bestblockhash": "01".repeat(32), "pruned": false}),
-    )
+    result(json!({
+        "chain": network,
+        "blocks": 12,
+        "bestblockhash": "01".repeat(32),
+        "pruned": false,
+    }))
 }
 
 pub async fn request(router: Router, path: &str, body: Option<Value>) -> (u16, Value) {
@@ -119,6 +130,7 @@ pub async fn request(router: Router, path: &str, body: Option<Value>) -> (u16, V
             .unwrap(),
         None => Request::get(path).body(Body::empty()).unwrap(),
     };
+
     let response = router.oneshot(request).await.unwrap();
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), 4096)
