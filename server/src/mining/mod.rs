@@ -51,7 +51,7 @@ pub struct MiningConfig {
 impl MiningConfig {
     pub fn from_environment() -> Result<Self, String> {
         let enabled = match env::var("TRUENORTH_MINING_ENABLED") {
-            Err(env::VarError::NotPresent) => Ok(false),
+            Err(env::VarError::NotPresent) => Ok(true),
             Ok(value) if value == "true" => Ok(true),
             Ok(value) if value == "false" => Ok(false),
             _ => Err("TRUENORTH_MINING_ENABLED must be 'true' or 'false'".to_owned()),
