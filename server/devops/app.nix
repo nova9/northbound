@@ -2,13 +2,13 @@
 
 let
   releaseTag = "v0.2.0-alpha.4";
-  releaseSha256 = pkgs.lib.fakeSha256;
+  releaseSha256 = "sha256-pvmx8hvf3gl4TnhGjpD+zRVYVKMIpfxE2uk2bn8kne8=";
 
   northbound-server = pkgs.stdenv.mkDerivation {
     name = "northbound-server";
     src = pkgs.fetchurl {
       url = "https://github.com/nova9/northbound/releases/download/${releaseTag}/northbound-server-linux-x64";
-      sha256 = releaseSha256;
+      hash = releaseSha256;
     };
     dontUnpack = true;
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
