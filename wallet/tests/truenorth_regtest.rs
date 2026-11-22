@@ -238,20 +238,27 @@ fn check_core_rejects_malformed_witnesses(signed_transaction: &str) {
     assert_eq!(valid_stack[1].len(), 32);
     assert_eq!(valid_stack[2], [1]);
 
-    let commitment_error = "Witness program hash mismatch";
+    let inactive_scheme = "P2QRH scheme id is not active";
+    let wrong_element_count = "P2QRH key-path witness must have exactly three elements";
     let cases = [
-        ("unknown_scheme_id", commitment_error),
-        ("scheme_id_zero", commitment_error),
-        ("scheme_id_wrong_byte_length", commitment_error),
-        ("wrong_pubkey_size", commitment_error),
-        ("commitment_mismatch", commitment_error),
+        ("unknown_scheme_id", inactive_scheme),
+        ("scheme_id_zero", inactive_scheme),
+        (
+            "scheme_id_wrong_byte_length",
+            "P2QRH scheme id must be exactly one byte",
+        ),
+        (
+            "wrong_pubkey_size",
+            "P2QRH public key has the wrong size for its scheme",
+        ),
+        ("commitment_mismatch", "Witness program hash mismatch"),
         ("invalid_signature", "Invalid Schnorr signature"),
         (
             "empty_witness",
             "Witness program was passed an empty witness",
         ),
-        ("too_few_stack_items", commitment_error),
-        ("extra_stack_items", commitment_error),
+        ("too_few_stack_items", wrong_element_count),
+        ("extra_stack_items", wrong_element_count),
     ];
 
     for (case, expected_error) in cases {
@@ -267,7 +274,8 @@ fn check_core_rejects_malformed_witnesses(signed_transaction: &str) {
             "invalid_signature" => stack[0][0] ^= 0xff,
             "empty_witness" => stack.clear(),
             "too_few_stack_items" => {
-                stack.pop();
+                // Keep the scheme ID last so Core reaches the element-count check.
+                stack.remove(0);
             }
             "extra_stack_items" => stack.insert(0, vec![0xde, 0xad]),
             _ => unreachable!("all cases are listed above"),

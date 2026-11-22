@@ -1,7 +1,7 @@
 { pkgs, ... }:
 
 let
-  releaseTag = "v0.2.0-alpha.3";
+  releaseTag = "v0.2.0-alpha.4";
   releaseSha256 = pkgs.lib.fakeSha256;
 
   northbound-server = pkgs.stdenv.mkDerivation {
@@ -21,11 +21,11 @@ let
 
   truenorth = pkgs.stdenv.mkDerivation {
     pname = "truenorth";
-    version = "30.5.4";
+    version = "30.5.5";
 
     src = pkgs.fetchurl {
-      url = "https://github.com/truenorth-project/truenorth/releases/download/v30.5.4/truenorth-v30.5.4-linux-x86_64.tar.gz";
-      hash = "sha256-uJ5lY7+TuYU9JNrojzksT+CBWYsc+ehXn11nrEXCKgU=";
+      url = "https://github.com/truenorth-project/truenorth/releases/download/v30.5.5/truenorth-v30.5.5-linux-x86_64.tar.gz";
+      hash = "sha256-ROb1F2X74s5jn2zjAwknQNu/0VY6gFlFGY/qYgZIgrg=";
     };
 
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
