@@ -128,7 +128,7 @@ fn spawn_indexer_worker(
 
         runtime.block_on(async {
             tokio::select! {
-                result = indexer::run_worker(&node, &mut database, poll_interval, false) => result,
+                result = indexer::run_worker(&node, &mut database, poll_interval) => result,
                 _ = stop.changed() => database.mark_unavailable(),
             }
         })

@@ -22,12 +22,12 @@ impl fmt::Display for Error {
             Self::Io(error) => write!(formatter, "indexer I/O: {error}"),
             Self::Unavailable(message) => write!(formatter, "index unavailable: {message}"),
             Self::InvalidRequest(message) => write!(formatter, "{message}"),
-            Self::CursorChanged => {
-                write!(formatter, "the index changed; restart pagination")
-            }
+            Self::CursorChanged => write!(formatter, "the index changed; restart pagination"),
         }
     }
 }
+
+impl std::error::Error for Error {}
 
 impl From<truenorth_rpc::Error> for Error {
     fn from(error: truenorth_rpc::Error) -> Self {
@@ -37,8 +37,6 @@ impl From<truenorth_rpc::Error> for Error {
         }
     }
 }
-
-impl std::error::Error for Error {}
 
 impl From<rusqlite::Error> for Error {
     fn from(error: rusqlite::Error) -> Self {

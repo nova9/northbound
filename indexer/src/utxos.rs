@@ -2,11 +2,13 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use shared::{MAX_UTXO_CURSOR_LENGTH, MAX_UTXO_PAGE_SIZE, UtxoResponse, WalletUtxo};
 
-use crate::queries::{ReadSnapshot, read_u64};
+use crate::queries::{
+    ReadSnapshot, calculate_confirmations, decode_cursor, encode_cursor, read_u64,
+};
 use crate::{Error, Result, decode_hash};
 
 #[derive(Deserialize, Serialize)]
-struct Cursor {
+struct UtxoCursor {
     tip_hash: String,
     pending_revision: u64,
     block_height: u64,
@@ -15,69 +17,71 @@ struct Cursor {
 }
 
 impl ReadSnapshot<'_> {
+    /// Returns one page of confirmed, unspent outputs for the requested scripts.
+    /// Outputs already spent by a pending mempool transaction are excluded.
     pub fn query_utxos(&self, cursor: Option<&str>, limit: u16) -> Result<UtxoResponse> {
         if limit == 0 || limit > MAX_UTXO_PAGE_SIZE {
             return Err(Error::InvalidRequest(
                 "UTXO limit must be between 1 and 10,000".into(),
             ));
         }
-        let height = self
-            .status
-            .indexed_height
-            .ok_or_else(|| Error::Unavailable("indexed tip is missing".into()))?;
-        let tip_hash = self
-            .status
-            .indexed_hash
-            .as_ref()
-            .ok_or_else(|| Error::Unavailable("indexed tip hash is missing".into()))?;
-        let pending_revision = self
-            .status
-            .pending_revision
-            .ok_or_else(|| Error::Unavailable("pending snapshot revision is missing".into()))?;
-        let cursor = decode_cursor(cursor)?;
-        if cursor.as_ref().is_some_and(|cursor| {
-            cursor.tip_hash != *tip_hash || cursor.pending_revision != pending_revision
-        }) {
-            return Err(Error::CursorChanged);
-        }
-        let last_height = cursor.as_ref().map(|cursor| cursor.block_height as i64);
-        let last_txid = cursor
-            .as_ref()
-            .map(|cursor| decode_hash(&cursor.transaction_id))
-            .transpose()?;
-        let last_output = cursor.as_ref().map(|cursor| cursor.output_index);
-        // Seek after the previous outpoint rather than skipping a growing OFFSET.
-        // The small requested set stays first so SQLite uses its script index.
+
+        let (tip_height, tip_hash, pending_revision) = self.snapshot_identity()?;
+        let cursor = parse_utxo_cursor(cursor, tip_hash, pending_revision)?;
+
+        let (last_height, last_txid, last_vout) = match &cursor {
+            Some(cursor) => (
+                Some(cursor.block_height as i64),
+                Some(decode_hash(&cursor.transaction_id)?),
+                Some(cursor.output_index),
+            ),
+            None => (None, None, None),
+        };
+
+        // Keep `requested_scripts` first with `CROSS JOIN` so SQLite seeks via
+        // the `outputs_by_script` index. Fetch `limit + 1` rows to know whether
+        // another page exists without a separate count query.
         let mut statement = self.database.prepare(
             "SELECT o.txid, o.vout, o.amount, o.script, b.height, t.is_coinbase
-             FROM requested_scripts r CROSS JOIN outputs o ON o.script = r.script
-             JOIN transactions t ON t.txid = o.txid JOIN blocks b ON b.hash = t.block_hash
+             FROM requested_scripts r
+             CROSS JOIN outputs o ON o.script = r.script
+             JOIN transactions t ON t.txid = o.txid
+             JOIN blocks b ON b.hash = t.block_hash
              WHERE o.utxo_eligible = 1
-               AND NOT EXISTS (SELECT 1 FROM spends WHERE previous_txid = o.txid AND previous_vout = o.vout)
-               AND NOT EXISTS (SELECT 1 FROM mempool_spends WHERE previous_txid = o.txid AND previous_vout = o.vout)
+               AND NOT EXISTS (
+                   SELECT 1 FROM spends
+                   WHERE previous_txid = o.txid AND previous_vout = o.vout
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM mempool_spends
+                   WHERE previous_txid = o.txid AND previous_vout = o.vout
+               )
                AND (?1 IS NULL OR (b.height, o.txid, o.vout) > (?1, ?2, ?3))
-             ORDER BY b.height, o.txid, o.vout LIMIT ?4",
+             ORDER BY b.height, o.txid, o.vout
+             LIMIT ?4",
         )?;
+
         let mut rows = statement.query(params![
             last_height,
             last_txid.as_ref().map(|id| id.as_slice()),
-            last_output,
+            last_vout,
             i64::from(limit) + 1
         ])?;
+
         let mut utxos = Vec::new();
         let mut has_more = false;
+
         while let Some(row) = rows.next()? {
             if utxos.len() == usize::from(limit) {
                 has_more = true;
                 break;
             }
+
             let txid: Vec<u8> = row.get(0)?;
             let script: Vec<u8> = row.get(3)?;
             let block_height = read_u64(row, 4)?;
-            let confirmations = height
-                .checked_sub(block_height)
-                .and_then(|difference| difference.checked_add(1))
-                .ok_or_else(|| Error::InvalidData("UTXO height exceeds indexed tip".into()))?;
+            let confirmations = calculate_confirmations(tip_height, block_height, "UTXO")?;
+
             utxos.push(WalletUtxo {
                 transaction_id: hex::encode(txid),
                 output_index: row.get(1)?,
@@ -88,23 +92,23 @@ impl ReadSnapshot<'_> {
                 coinbase: row.get(5)?,
             });
         }
+
         let next_cursor = if has_more {
             let last = utxos
                 .last()
                 .ok_or_else(|| Error::InvalidData("UTXO page is empty".into()))?;
-            let cursor = Cursor {
-                tip_hash: tip_hash.clone(),
+            let next = UtxoCursor {
+                tip_hash: tip_hash.to_owned(),
                 pending_revision,
                 block_height: last.block_height,
                 transaction_id: last.transaction_id.clone(),
                 output_index: last.output_index,
             };
-            let bytes = serde_json::to_vec(&cursor)
-                .map_err(|_| Error::InvalidData("cannot encode UTXO cursor".into()))?;
-            Some(hex::encode(bytes))
+            Some(encode_cursor(&next, "UTXO")?)
         } else {
             None
         };
+
         Ok(UtxoResponse {
             utxos,
             next_cursor,
@@ -113,23 +117,26 @@ impl ReadSnapshot<'_> {
     }
 }
 
-fn decode_cursor(text: Option<&str>) -> Result<Option<Cursor>> {
-    let Some(text) = text else {
+fn parse_utxo_cursor(
+    text: Option<&str>,
+    expected_tip_hash: &str,
+    expected_revision: u64,
+) -> Result<Option<UtxoCursor>> {
+    let Some(cursor) = decode_cursor::<UtxoCursor>(text, MAX_UTXO_CURSOR_LENGTH, "UTXO")? else {
         return Ok(None);
     };
-    if text.len() > MAX_UTXO_CURSOR_LENGTH {
-        return Err(Error::InvalidRequest("UTXO cursor is too long".into()));
-    }
-    let bytes =
-        hex::decode(text).map_err(|_| Error::InvalidRequest("invalid UTXO cursor".into()))?;
-    let cursor: Cursor = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::InvalidRequest("invalid UTXO cursor".into()))?;
+
     if cursor.block_height > i64::MAX as u64
         || decode_hash(&cursor.transaction_id).is_err()
         || decode_hash(&cursor.tip_hash).is_err()
     {
         return Err(Error::InvalidRequest("invalid UTXO cursor fields".into()));
     }
+
+    if cursor.tip_hash != expected_tip_hash || cursor.pending_revision != expected_revision {
+        return Err(Error::CursorChanged);
+    }
+
     Ok(Some(cursor))
 }
 

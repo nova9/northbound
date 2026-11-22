@@ -2,114 +2,143 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use shared::{TransactionHistory, WalletTransaction};
 
-use crate::queries::{ReadSnapshot, read_optional_u64, read_u64};
+use crate::queries::{
+    ReadSnapshot, calculate_confirmations, decode_cursor, encode_cursor, read_optional_u64,
+    read_u64,
+};
 use crate::{Error, Result, decode_hash};
 
+const MAX_HISTORY_PAGE_SIZE: u16 = 200;
+const MAX_HISTORY_CURSOR_LENGTH: usize = 1024;
+
+// Pending transactions have `block_height = NULL`. Mapping `NULL` to `i64::MAX`
+// sorts unconfirmed transactions above the newest confirmed block.
+const PENDING_SORT_HEIGHT: i64 = i64::MAX;
+
 #[derive(Deserialize, Serialize)]
-struct Cursor {
+struct HistoryCursor {
     tip_hash: String,
-    pending_revision: i64,
+    pending_revision: u64,
     height: i64,
     txid: String,
 }
 
 impl ReadSnapshot<'_> {
+    /// Returns one page of confirmed and pending transactions touching the requested
+    /// scripts, ordered newest-first (pending transactions first, then descending block height).
     pub fn query_transaction_history(
         &self,
         cursor: Option<&str>,
         limit: u16,
     ) -> Result<TransactionHistory> {
-        if !(1..=200).contains(&limit) {
+        if !(1..=MAX_HISTORY_PAGE_SIZE).contains(&limit) {
             return Err(Error::InvalidRequest(
                 "history limit must be between 1 and 200".into(),
             ));
         }
-        let revision: i64 =
-            self.database
-                .query_row("SELECT pending_revision FROM sync_status", [], |row| {
-                    row.get(0)
-                })?;
-        let tip_hash = self
-            .status
-            .indexed_hash
-            .clone()
-            .ok_or_else(|| Error::Unavailable("indexed tip missing".into()))?;
-        let cursor = decode_cursor(cursor)?;
-        if cursor.as_ref().is_some_and(|cursor| {
-            cursor.tip_hash != tip_hash || cursor.pending_revision != revision
-        }) {
-            return Err(Error::CursorChanged);
-        }
-        let last_height = cursor.as_ref().map(|cursor| cursor.height);
-        let last_id = cursor
-            .as_ref()
-            .map(|cursor| decode_hash(&cursor.txid))
-            .transpose()?;
-        // Materialize only matching outpoints, then seek spends and transactions
-        // by their indexes. CROSS JOIN preserves that lookup order in SQLite.
+
+        let (tip_height, tip_hash, pending_revision) = self.snapshot_identity()?;
+        let cursor = parse_history_cursor(cursor, tip_hash, pending_revision)?;
+
+        let (last_height, last_txid) = match &cursor {
+            Some(cursor) => (Some(cursor.height), Some(decode_hash(&cursor.txid)?)),
+            None => (None, None),
+        };
+
+        // 1. Find every confirmed/pending output belonging to our requested scripts.
+        // 2. Collect transactions that created those outputs or spent them.
+        // 3. Look up their height, timestamp, and coinbase flag, then paginate.
+        // `CROSS JOIN` keeps SQLite seeking from the small `requested_scripts` table.
         let mut statement = self.database.prepare(
             "WITH matched_outputs AS MATERIALIZED (
-                SELECT o.txid, o.vout FROM requested_scripts r
-                CROSS JOIN outputs o ON o.script = r.script
-                UNION ALL
-                SELECT o.txid, o.vout FROM requested_scripts r
-                CROSS JOIN mempool_outputs o ON o.script = r.script
-             ), matching AS (
-                SELECT txid FROM matched_outputs
-                UNION
-                SELECT s.spending_txid FROM matched_outputs o CROSS JOIN spends s
-                    ON s.previous_txid = o.txid AND s.previous_vout = o.vout
-                UNION
-                SELECT s.spending_txid FROM matched_outputs o CROSS JOIN mempool_spends s
-                    ON s.previous_txid = o.txid AND s.previous_vout = o.vout
-             ), matched_transactions AS (
-                SELECT t.txid, b.height AS block_height, b.timestamp
-                FROM matching m CROSS JOIN transactions t ON t.txid = m.txid
-                JOIN blocks b ON b.hash = t.block_hash
-                UNION ALL
-                SELECT t.txid, NULL, t.first_seen_at FROM matching m
-                CROSS JOIN mempool_transactions t ON t.txid = m.txid
-             ) SELECT txid, block_height, timestamp FROM matched_transactions
-             WHERE ?1 IS NULL OR coalesce(block_height, 9223372036854775807) < ?1
-                OR (coalesce(block_height, 9223372036854775807) = ?1 AND txid > ?2)
-             ORDER BY coalesce(block_height, 9223372036854775807) DESC, txid
-             LIMIT ?3",
+                 SELECT o.txid, o.vout
+                 FROM requested_scripts r
+                 CROSS JOIN outputs o ON o.script = r.script
+                 UNION ALL
+                 SELECT o.txid, o.vout
+                 FROM requested_scripts r
+                 CROSS JOIN mempool_outputs o ON o.script = r.script
+             ),
+             matching_txids AS (
+                 SELECT txid FROM matched_outputs
+                 UNION
+                 SELECT s.spending_txid
+                 FROM matched_outputs o
+                 CROSS JOIN spends s
+                     ON s.previous_txid = o.txid AND s.previous_vout = o.vout
+                 UNION
+                 SELECT s.spending_txid
+                 FROM matched_outputs o
+                 CROSS JOIN mempool_spends s
+                     ON s.previous_txid = o.txid AND s.previous_vout = o.vout
+             ),
+             matched_transactions AS (
+                 SELECT t.txid, b.height AS block_height, b.timestamp, t.is_coinbase
+                 FROM matching_txids m
+                 CROSS JOIN transactions t ON t.txid = m.txid
+                 JOIN blocks b ON b.hash = t.block_hash
+                 UNION ALL
+                 SELECT t.txid, NULL, t.first_seen_at, 0
+                 FROM matching_txids m
+                 CROSS JOIN mempool_transactions t ON t.txid = m.txid
+             )
+             SELECT txid, block_height, timestamp, is_coinbase
+             FROM matched_transactions
+             WHERE ?1 IS NULL
+                OR coalesce(block_height, ?2) < ?1
+                OR (coalesce(block_height, ?2) = ?1 AND txid > ?3)
+             ORDER BY coalesce(block_height, ?2) DESC, txid
+             LIMIT ?4",
         )?;
+
         let mut rows = statement.query(params![
             last_height,
-            last_id.as_ref().map(|id| id.as_slice()),
+            PENDING_SORT_HEIGHT,
+            last_txid.as_ref().map(|id| id.as_slice()),
             i64::from(limit) + 1
         ])?;
+
         let mut transactions = Vec::new();
-        let mut last = None;
         let mut has_more = false;
+
         while let Some(row) = rows.next()? {
             if transactions.len() == usize::from(limit) {
                 has_more = true;
                 break;
             }
-            let id: Vec<u8> = row.get(0)?;
-            let height = read_optional_u64(row, 1)?;
+
+            let txid: Vec<u8> = row.get(0)?;
+            let block_height = read_optional_u64(row, 1)?;
             let timestamp = read_u64(row, 2)?;
-            transactions.push(self.summarize_transaction(&id, height, timestamp)?);
-            last = Some((height, hex::encode(id)));
+            let is_coinbase: bool = row.get(3)?;
+
+            transactions.push(self.summarize_transaction(
+                &txid,
+                block_height,
+                timestamp,
+                is_coinbase,
+                tip_height,
+            )?);
         }
+
         let next_cursor = if has_more {
-            let (height, txid) = last.ok_or_else(|| {
+            let last = transactions.last().ok_or_else(|| {
                 Error::InvalidData("history cursor has no last transaction".into())
             })?;
-            let cursor = Cursor {
-                tip_hash,
-                pending_revision: revision,
-                height: height.map(|height| height as i64).unwrap_or(i64::MAX),
-                txid,
+            let next = HistoryCursor {
+                tip_hash: tip_hash.to_owned(),
+                pending_revision,
+                height: last
+                    .block_height
+                    .map(|height| height as i64)
+                    .unwrap_or(PENDING_SORT_HEIGHT),
+                txid: last.transaction_id.clone(),
             };
-            let bytes = serde_json::to_vec(&cursor)
-                .map_err(|_| Error::InvalidData("cannot encode history cursor".into()))?;
-            Some(hex::encode(bytes))
+            Some(encode_cursor(&next, "history")?)
         } else {
             None
         };
+
         Ok(TransactionHistory {
             transactions,
             next_cursor,
@@ -119,93 +148,117 @@ impl ReadSnapshot<'_> {
 
     fn summarize_transaction(
         &self,
-        id: &[u8],
-        height: Option<u64>,
+        txid: &[u8],
+        block_height: Option<u64>,
         timestamp: u64,
+        is_coinbase: bool,
+        tip_height: u64,
     ) -> Result<WalletTransaction> {
-        let is_coinbase: bool = self.database.query_row(
-            "SELECT is_coinbase FROM all_transactions WHERE txid = ?1",
-            [id],
-            |row| row.get(0),
-        )?;
-        let mut received = 0_u64;
-        let mut output_total = 0_u64;
-        let mut outputs = self.database.prepare(
-            "SELECT o.amount, EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
-             FROM all_outputs o WHERE o.txid = ?1",
-        )?;
-        for row in outputs.query_map([id], |row| Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?)))? {
-            let (amount, owned) = row?;
-            output_total = add(output_total, amount)?;
-            if owned {
-                received = add(received, amount)?;
-            }
-        }
-        let mut total_input = 0;
-        let mut owned_input = 0;
-        let mut inputs = self.database.prepare(
-            "SELECT o.amount, EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
-             FROM all_spends s JOIN all_outputs o ON o.txid = s.previous_txid AND o.vout = s.previous_vout
-             WHERE s.spending_txid = ?1",
-        )?;
-        for row in inputs.query_map([id], |row| Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?)))? {
-            let (amount, owned) = row?;
-            total_input = add(total_input, amount)?;
-            if owned {
-                owned_input = add(owned_input, amount)?;
-            }
-        }
-        // Keep credits and debits signed: clamping at zero loses contributions
-        // when a client combines histories for different address batches.
-        let net_amount = i64::try_from(i128::from(received) - i128::from(owned_input))
+        let (total_output, owned_output) = self.sum_transaction_outputs(txid)?;
+        let (total_input, owned_input) = self.sum_transaction_inputs(txid)?;
+
+        // Signed net balance change for the requested scripts (`owned_output - owned_input`).
+        // Keeping this signed lets the wallet add batch results together accurately.
+        let net_amount = i64::try_from(i128::from(owned_output) - i128::from(owned_input))
             .map_err(|_| Error::InvalidData("history net amount overflow".into()))?;
+
+        // Fee covers the entire transaction, regardless of which addresses own inputs/outputs.
         let network_fee = if is_coinbase {
             None
         } else {
-            Some(
-                total_input
-                    .checked_sub(output_total)
-                    .ok_or_else(|| Error::InvalidData("history outputs exceed inputs".into()))?,
-            )
+            let fee = total_input
+                .checked_sub(total_output)
+                .ok_or_else(|| Error::InvalidData("history outputs exceed inputs".into()))?;
+            Some(fee)
         };
-        let confirmations = match height {
-            Some(height) => self
-                .status
-                .indexed_height
-                .and_then(|tip| tip.checked_sub(height))
-                .and_then(|difference| difference.checked_add(1))
-                .ok_or_else(|| Error::InvalidData("history height exceeds indexed tip".into()))?,
+
+        let confirmations = match block_height {
+            Some(height) => calculate_confirmations(tip_height, height, "history")?,
             None => 0,
         };
+
         Ok(WalletTransaction {
-            transaction_id: hex::encode(id),
+            transaction_id: hex::encode(txid),
             net_amount,
             network_fee,
             coinbase: is_coinbase,
-            block_height: height,
+            block_height,
             confirmations,
             timestamp: Some(timestamp),
         })
     }
+
+    /// Returns `(total_output, owned_output)` across all outputs of `txid`.
+    fn sum_transaction_outputs(&self, txid: &[u8]) -> Result<(u64, u64)> {
+        let mut statement = self.database.prepare(
+            "SELECT o.amount,
+                    EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
+             FROM all_outputs o
+             WHERE o.txid = ?1",
+        )?;
+
+        let mut total = 0_u64;
+        let mut owned_total = 0_u64;
+        let rows = statement.query_map([txid], |row| {
+            Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?))
+        })?;
+
+        for row in rows {
+            let (amount, is_owned) = row?;
+            total = add_amount(total, amount)?;
+            if is_owned {
+                owned_total = add_amount(owned_total, amount)?;
+            }
+        }
+
+        Ok((total, owned_total))
+    }
+
+    /// Returns `(total_input, owned_input)` across all inputs spent by `txid`.
+    fn sum_transaction_inputs(&self, txid: &[u8]) -> Result<(u64, u64)> {
+        let mut statement = self.database.prepare(
+            "SELECT o.amount,
+                    EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
+             FROM all_spends s
+             JOIN all_outputs o
+                 ON o.txid = s.previous_txid AND o.vout = s.previous_vout
+             WHERE s.spending_txid = ?1",
+        )?;
+
+        let mut total = 0_u64;
+        let mut owned_total = 0_u64;
+        let rows = statement.query_map([txid], |row| {
+            Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?))
+        })?;
+
+        for row in rows {
+            let (amount, is_owned) = row?;
+            total = add_amount(total, amount)?;
+            if is_owned {
+                owned_total = add_amount(owned_total, amount)?;
+            }
+        }
+
+        Ok((total, owned_total))
+    }
 }
 
-fn add(total: u64, amount: u64) -> Result<u64> {
+fn add_amount(total: u64, amount: u64) -> Result<u64> {
     total
         .checked_add(amount)
         .ok_or_else(|| Error::InvalidData("history amount overflow".into()))
 }
 
-fn decode_cursor(text: Option<&str>) -> Result<Option<Cursor>> {
-    let Some(text) = text else {
+fn parse_history_cursor(
+    text: Option<&str>,
+    expected_tip_hash: &str,
+    expected_revision: u64,
+) -> Result<Option<HistoryCursor>> {
+    let Some(cursor) = decode_cursor::<HistoryCursor>(text, MAX_HISTORY_CURSOR_LENGTH, "history")?
+    else {
         return Ok(None);
     };
-    if text.len() > 1024 {
-        return Err(Error::InvalidRequest("history cursor is too long".into()));
-    }
-    let bytes =
-        hex::decode(text).map_err(|_| Error::InvalidRequest("invalid history cursor".into()))?;
-    let cursor: Cursor = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::InvalidRequest("invalid history cursor".into()))?;
+
     if cursor.height < 0
         || decode_hash(&cursor.txid).is_err()
         || decode_hash(&cursor.tip_hash).is_err()
@@ -214,6 +267,11 @@ fn decode_cursor(text: Option<&str>) -> Result<Option<Cursor>> {
             "invalid history cursor fields".into(),
         ));
     }
+
+    if cursor.tip_hash != expected_tip_hash || cursor.pending_revision != expected_revision {
+        return Err(Error::CursorChanged);
+    }
+
     Ok(Some(cursor))
 }
 

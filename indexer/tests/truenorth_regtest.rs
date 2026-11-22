@@ -3,7 +3,6 @@ mod support;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use indexer::{
     IndexDatabase, IndexReader, MempoolCache, decode_addresses, refresh_mempool,
@@ -223,27 +222,6 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
             .is_err()
     );
     assert_eq!(database.tip().unwrap(), before);
-
-    // Exercise the executable too, using a separate database from the library.
-    let binary_path = directory.path().join("binary.sqlite");
-    for first_run in [true, false] {
-        let output = Command::new(env!("CARGO_BIN_EXE_indexer"))
-            .arg("--once")
-            .env("TRUENORTH_NETWORK", "regtest")
-            .env("TRUENORTH_RPC_URL", &url)
-            .env("TRUENORTH_RPC_COOKIE_PATH", &cookie)
-            .env("TRUENORTH_INDEX_DATABASE", &binary_path)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(stdout.contains("Caught up at"));
-        assert_eq!(stdout.contains("Indexed 0 "), first_run);
-    }
 }
 
 #[derive(Deserialize)]

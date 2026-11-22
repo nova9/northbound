@@ -6,31 +6,13 @@ lookup functions. The API server runs its worker on a dedicated thread and uses
 these queries instead of request-time blockchain scans. RPC transport and exact
 block/transaction decoding live in the separate `truenorth-rpc` crate.
 
-## Run
+## Usage
 
-Normally, run `cargo run -p server`; it starts the indexer automatically with
-`.local/indexer/chain.sqlite` as its default database. Stop any standalone writer
-using that database first. For a standalone catch-up, start an unpruned regtest
-daemon with `./scripts/regtest.sh start`, then:
-
-```sh
-mkdir -p .local/indexer
-TRUENORTH_INDEX_DATABASE="$PWD/.local/indexer/chain.sqlite" \
-  cargo run -p indexer -- --once
-```
-
-`--once` reconciles the saved index, publishes a mempool snapshot, and exits. Omit
-it to poll continuously; Ctrl-C stops the process. Reusing the database resumes
-from its highest committed block rather than rescanning genesis. Open the file
-in TablePlus to inspect the records; avoid editing it while the indexer runs.
-
-| Environment variable | Default |
-|---|---|
-| `TRUENORTH_INDEX_DATABASE` | Required path; parent directory must exist |
-| `TRUENORTH_NETWORK` | `regtest`; also accepts `main` |
-| `TRUENORTH_RPC_URL` | `http://127.0.0.1:18443`; main uses port `9554` |
-| `TRUENORTH_RPC_COOKIE_PATH` | `.local/truenorth/regtest/.cookie`; main uses `.local/truenorth/.cookie` |
-| `TRUENORTH_INDEX_POLL_SECONDS` | `2`; accepts 1–3600 |
+This crate is a library used by `server`. Run `cargo run -p server` to start the
+indexer worker automatically with `.local/indexer/chain.sqlite` as its default
+database. Reusing the database resumes from its highest committed block rather
+than rescanning genesis. Open the file in TablePlus to inspect the records;
+avoid editing it while the server runs.
 
 Use a new database file or an existing index created by this crate. Version 1
 indexes migrate to version 2 without rescanning confirmed blocks. Manually
@@ -69,11 +51,10 @@ its own write transactions, but the sidecar lock coordinates indexer processes,
 not arbitrary SQL clients.
 
 RPC calls time out after 30 seconds and responses are bounded to 64 MiB. During
-synchronization, RPC errors mark the index unavailable and are retried indefinitely,
-including with `--once`. Delays start at two seconds and double up to thirty
-seconds, resetting after a successful attempt. Chain or mempool changes during
-capture are retried by the worker after the normal polling interval. Startup
-errors stop immediately. Neither
+synchronization, RPC errors mark the index unavailable and are retried indefinitely.
+Delays start at two seconds and double up to thirty seconds, resetting after a
+successful attempt. Chain or mempool changes during capture are retried by the
+worker after the normal polling interval. Startup errors stop immediately. Neither
 path fabricates empty data or advances progress after a failed RPC. Decode,
 identity, and database errors stop immediately. A missing historical block
 must be made available before retrying; pruned nodes are rejected.
@@ -95,9 +76,8 @@ Eviction and replacement remove the previous pending effects.
 Readiness requires equal indexed/observed tips, a matching pending base, and
 node contact and pending observation no older than **30 seconds**. RPC failure
 marks the index unavailable immediately. Data queries reject unavailable state
-instead of returning an empty wallet. A standalone `--once` snapshot also expires
-after 30 seconds without further observations. The server limits its polling
-interval to 1–10 seconds and stops if the worker fails permanently.
+instead of returning an empty wallet. The server limits its polling interval to
+1–10 seconds and stops if the worker fails permanently.
 
 ## Query functions
 
@@ -172,7 +152,7 @@ in `tests/truenorth_regtest.rs` and runs through the isolated shell harness abov
 The regtest test verifies P2QRH scripts and amounts against `validateaddress`
 and `gettxout`, restart, same-height branch replacement, removal and subsequent
 reconfirmation of a payment, rollback of more than fifty blocks, node failure,
-wrong-network rejection, executable catch-up, and equality with a clean rebuild.
+wrong-network rejection, and equality with a clean rebuild.
 It also compares the full indexed UTXO result with `scantxoutset` after mining,
 payment/change, restart, and reorganizations, including a deep rollback. The
 comparison covers outpoints, exact atomic amounts, scripts, block heights,

@@ -13,9 +13,8 @@ curl -i http://127.0.0.1:3000/ready
 
 The server starts one indexer worker and uses `.local/indexer/chain.sqlite` by
 default. Set `TRUENORTH_INDEX_DATABASE` to choose another path; its parent is
-created automatically. Stop a standalone indexer using that file before starting
-the server. Existing version 1 indexes migrate automatically; hand-built tutorial
-databases are deliberately not adopted.
+created automatically. Existing version 1 indexes migrate automatically; hand-built
+tutorial databases are deliberately not adopted.
 
 `/ready` returns index status with HTTP 200 when fresh, or 503 during catch-up,
 rollback, missing pending state, or stale observations. Wallet data requests also

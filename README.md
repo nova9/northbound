@@ -178,10 +178,9 @@ and isolated wallet, indexer, and server regtest suites.
 The [server](server/README.md) starts the [SQLite indexer](indexer/README.md),
 follows reorganizations, and serves wallet data through indexed queries. It uses
 `.local/indexer/chain.sqlite` by default; set `TRUENORTH_INDEX_DATABASE` to change
-the path. Stop any standalone indexer writing that file before running the server.
-`GET /ready` reports catch-up and freshness; wallet data returns a retryable error
-until confirmed and pending snapshots are ready. Fee estimation, validation, and
-broadcast remain connected directly to the daemon.
+the path. `GET /ready` reports catch-up and freshness; wallet data returns a
+retryable error until confirmed and pending snapshots are ready. Fee estimation,
+validation, and broadcast remain connected directly to the daemon.
 
 Run the complete indexed API checks with an isolated node:
 
