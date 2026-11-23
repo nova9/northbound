@@ -24,8 +24,9 @@ reports that downloads are not ready and skips upload and deployment successfull
 The existing website stays online. API failures and invalid release metadata
 still fail the workflow.
 
-`scripts/build-website.py` reads the published release metadata and fills in the
-version and all three download URLs. It requires `Northbound-<tag>-macos-arm64.zip`,
+`scripts/build-website.py` reads the published release metadata, fills in the
+version and all three download URLs, and writes a small `release.json` manifest
+(`{"tag", "prerelease"}`) used by the desktop wallet to check for updates. It requires `Northbound-<tag>-macos-arm64.zip`,
 `Northbound-<tag>-windows-x64.msi`, `Northbound-<tag>-linux-x64.AppImage`, and each package's `.sha256` file before
 deployment, so a missing download fails the job instead of publishing a broken
 link. Generated files are uploaded as a Pages artifact; source HTML is not

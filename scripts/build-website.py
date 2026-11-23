@@ -3,8 +3,11 @@
 import html
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
+
+SAFE_TAG_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 
 def build_website(release, output_directory):
@@ -12,7 +15,12 @@ def build_website(release, output_directory):
         raise ValueError("The public website requires a published release.")
 
     tag = release["tag_name"]
-    release_label = "Prerelease" if release.get("prerelease") else "Release"
+    if not isinstance(tag, str) or not SAFE_TAG_PATTERN.fullmatch(tag):
+        raise ValueError(
+            "Release tag must contain only letters, numbers, dots, underscores, and hyphens."
+        )
+    is_prerelease = bool(release.get("prerelease"))
+    release_label = "Prerelease" if is_prerelease else "Release"
     packages = {
         "macos": f"Northbound-{tag}-macos-arm64.zip",
         "windows": f"Northbound-{tag}-windows-x64.msi",
@@ -53,6 +61,13 @@ def build_website(release, output_directory):
     # Copy only public files; the repository's README is not a website asset.
     output_directory.mkdir(parents=True, exist_ok=False)
     (output_directory / "index.html").write_text(page)
+    release_metadata = {
+        "tag": tag,
+        "prerelease": is_prerelease,
+    }
+    (output_directory / "release.json").write_text(
+        json.dumps(release_metadata, indent=2) + "\n"
+    )
     shutil.copyfile(source_directory / "styles.css", output_directory / "styles.css")
     shutil.copyfile(source_directory / "carousel.js", output_directory / "carousel.js")
     shutil.copyfile(source_directory / "donation.js", output_directory / "donation.js")

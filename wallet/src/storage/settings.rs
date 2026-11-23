@@ -4,9 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{DEFAULT_API_BASE_URL, settings_path};
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(default)]
 struct WalletSettings {
     custom_api_base_url: Option<String>,
+    skipped_update_version: Option<String>,
 }
 
 static WALLET_SETTINGS_CACHE: OnceLock<RwLock<Result<WalletSettings, String>>> = OnceLock::new();
@@ -29,14 +31,38 @@ pub(crate) fn custom_api_base_url() -> Result<Option<String>, String> {
 
 pub(crate) fn save_custom_api_base_url(url: &str) -> Result<String, String> {
     let normalized_url = validate_and_normalize_api_base_url(url)?;
-    save_and_cache_settings(WalletSettings {
-        custom_api_base_url: Some(normalized_url.clone()),
+    update_cached_settings(|settings| {
+        settings.custom_api_base_url = Some(normalized_url.clone());
     })?;
     Ok(normalized_url)
 }
 
 pub(crate) fn reset_api_base_url_to_default() -> Result<(), String> {
-    save_and_cache_settings(WalletSettings::default())
+    update_cached_settings(|settings| {
+        settings.custom_api_base_url = None;
+    })
+}
+
+pub(crate) fn skipped_update_version() -> Result<Option<String>, String> {
+    let settings = wallet_settings_cache()
+        .read()
+        .map_err(|_| "wallet settings are unavailable".to_owned())?;
+
+    match &*settings {
+        Ok(settings) => Ok(settings.skipped_update_version.clone()),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+pub(crate) fn save_skipped_update_version(version: &str) -> Result<(), String> {
+    let normalized = version.trim();
+    if normalized.is_empty() {
+        return Err("Skipped update version cannot be empty.".to_owned());
+    }
+    let normalized = normalized.to_owned();
+    update_cached_settings(|settings| {
+        settings.skipped_update_version = Some(normalized);
+    })
 }
 
 pub(crate) fn validate_and_normalize_api_base_url(url: &str) -> Result<String, String> {
@@ -80,12 +106,17 @@ fn wallet_settings_cache() -> &'static RwLock<Result<WalletSettings, String>> {
     WALLET_SETTINGS_CACHE.get_or_init(|| RwLock::new(read_settings_file()))
 }
 
-fn save_and_cache_settings(settings: WalletSettings) -> Result<(), String> {
+fn update_cached_settings(change: impl FnOnce(&mut WalletSettings)) -> Result<(), String> {
     let mut cached_settings = wallet_settings_cache()
         .write()
-        .map_err(|_| "wallet server settings are unavailable".to_owned())?;
-    write_settings_file(&settings)?;
-    *cached_settings = Ok(settings);
+        .map_err(|_| "wallet settings are unavailable".to_owned())?;
+    let mut updated = match &*cached_settings {
+        Ok(settings) => settings.clone(),
+        Err(error) => return Err(error.clone()),
+    };
+    change(&mut updated);
+    write_settings_file(&updated)?;
+    *cached_settings = Ok(updated);
     Ok(())
 }
 
@@ -177,5 +208,18 @@ mod tests {
     #[test]
     fn default_server_satisfies_transport_policy() {
         assert!(validate_and_normalize_api_base_url(DEFAULT_API_BASE_URL).is_ok());
+    }
+
+    #[test]
+    fn settings_file_without_skipped_version_remains_valid() {
+        let json = r#"{"custom_api_base_url":"https://wallet.example.com"}"#;
+        let settings: super::WalletSettings =
+            serde_json::from_str(json).expect("legacy settings should parse");
+
+        assert_eq!(
+            settings.custom_api_base_url.as_deref(),
+            Some("https://wallet.example.com")
+        );
+        assert_eq!(settings.skipped_update_version, None);
     }
 }

@@ -261,6 +261,14 @@ select { width: 170px; }
 .alert-dialog.danger .button.primary { background: var(--color-error); }
 .alert-dialog.danger .button.primary:hover { background: #8f2929; }
 .alert-actions { display: flex; justify-content: flex-end; margin-top: 22px; }
+.update-dialog.modal-dialog { width: min(460px, calc(100% - 32px)); }
+.update-dialog h2 { font-size: 19px; margin-bottom: 8px; }
+.update-dialog > p { font-size: 13px; color: var(--color-text-muted); }
+.update-dialog > p + p { margin-top: 10px; }
+.update-dialog .error-message { margin-top: 12px; }
+.update-dialog-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.update-dialog-actions .text-button { margin-right: auto; }
+.update-dialog-link { display: inline-flex; align-items: center; gap: 7px; border-radius: 6px; text-decoration: none; }
 .transaction-history { flex: 1; min-height: 0; margin-bottom: 16px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
 .transaction-browser { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); height: 100%; }
 .transaction-list { background: var(--color-background); }

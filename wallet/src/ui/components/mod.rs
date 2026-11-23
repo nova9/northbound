@@ -8,6 +8,7 @@ mod recovery_words;
 mod remove_wallet_dialog;
 mod sidebar;
 mod transaction_history;
+mod update_dialog;
 
 pub(crate) use alert_dialog::{AlertDialog, AlertTone};
 pub(crate) use error_message::ErrorMessage;
@@ -19,3 +20,4 @@ pub(crate) use recovery_words::RecoveryWords;
 pub(crate) use remove_wallet_dialog::RemoveWalletDialog;
 pub(crate) use sidebar::Sidebar;
 pub(crate) use transaction_history::TransactionHistoryView;
+pub(crate) use update_dialog::UpdateAvailableDialog;

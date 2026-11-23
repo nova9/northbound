@@ -62,6 +62,14 @@ pub const DEFAULT_API_BASE_URL: &str = match option_env!("NORTHBOUND_API_BASE_UR
     None => "https://api.northboundwallet.org",
 };
 
+pub const GITHUB_RELEASES_TAG_BASE_URL: &str = "https://github.com/nova9/northbound/releases/tag";
+
+pub const UPDATE_CHECK_URL: &str = match option_env!("NORTHBOUND_UPDATE_URL") {
+    Some(url) => url,
+    None if cfg!(feature = "regtest") => "http://127.0.0.1:3001/release.json",
+    None => "https://northboundwallet.org/release.json",
+};
+
 #[cfg(debug_assertions)]
 pub(crate) fn settings_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(".local").join("settings.json"))

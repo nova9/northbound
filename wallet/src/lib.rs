@@ -5,6 +5,7 @@ mod server;
 mod storage;
 mod transactions;
 mod ui;
+mod updates;
 mod wallet;
 
 use std::str::FromStr;
