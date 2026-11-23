@@ -73,10 +73,9 @@ pub const SALT_LENGTH: usize = 16;
 pub const NONCE_LENGTH: usize = 24;
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct DecryptedWalletSecrets {
     bip39_entropy: [u8; 16],
-    next_receiving_index: u32,
-    next_change_index: u32,
 }
 
 impl Drop for DecryptedWalletSecrets {
@@ -85,13 +84,25 @@ impl Drop for DecryptedWalletSecrets {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyWalletSecretsV1 {
+    bip39_entropy: [u8; 16],
+    #[allow(dead_code)]
+    next_receiving_index: u32,
+    #[allow(dead_code)]
+    next_change_index: u32,
+}
+
+impl Drop for LegacyWalletSecretsV1 {
+    fn drop(&mut self) {
+        self.bip39_entropy.zeroize();
+    }
+}
+
 impl DecryptedWalletSecrets {
     pub fn new(bip39_entropy: [u8; 16]) -> Self {
-        Self {
-            bip39_entropy,
-            next_receiving_index: 0,
-            next_change_index: 0,
-        }
+        Self { bip39_entropy }
     }
 
     pub fn encrypt(&self, password: &str) -> Result<EncryptedWalletSecrets, String> {
@@ -144,41 +155,6 @@ impl DecryptedWalletSecrets {
 
     pub(crate) fn bip39_entropy(&self) -> &[u8; 16] {
         &self.bip39_entropy
-    }
-
-    pub(crate) fn next_receiving_index(&self) -> u32 {
-        self.next_receiving_index
-    }
-
-    pub(crate) fn advance_receiving_index(&mut self) -> Result<(), String> {
-        self.next_receiving_index = self
-            .next_receiving_index
-            .checked_add(1)
-            .ok_or_else(|| "receiving address index is exhausted".to_owned())?;
-
-        Ok(())
-    }
-
-    pub(crate) fn next_change_index(&self) -> u32 {
-        self.next_change_index
-    }
-
-    pub(crate) fn advance_change_index(&mut self) -> Result<(), String> {
-        self.next_change_index = self
-            .next_change_index
-            .checked_add(1)
-            .ok_or_else(|| "change address index is exhausted".to_owned())?;
-
-        Ok(())
-    }
-
-    pub(crate) fn set_next_address_indexes(
-        &mut self,
-        next_receiving_index: u32,
-        next_change_index: u32,
-    ) {
-        self.next_receiving_index = next_receiving_index;
-        self.next_change_index = next_change_index;
     }
 }
 
@@ -235,6 +211,22 @@ impl EncryptedWalletSecrets {
 
         let result = serde_json::from_slice(&plaintext)
             .map_err(|error| format!("could not decode wallet secrets: {error}"));
+
+        plaintext.zeroize();
+
+        result
+    }
+
+    pub(crate) fn decrypt_v1_wallet_with_key(
+        &self,
+        encryption_key: &EncryptionKey,
+    ) -> Result<DecryptedWalletSecrets, String> {
+        let mut plaintext =
+            decrypt_wallet_secrets_with_key(&self.ciphertext, encryption_key, &self.nonce)?;
+
+        let result = serde_json::from_slice::<LegacyWalletSecretsV1>(&plaintext)
+            .map(|legacy| DecryptedWalletSecrets::new(legacy.bip39_entropy))
+            .map_err(|error| format!("could not decode version 1 wallet secrets: {error}"));
 
         plaintext.zeroize();
 
@@ -473,11 +465,7 @@ mod tests {
 
     #[test]
     fn wallet_payload_survives_encryption_roundtrip() {
-        let original = DecryptedWalletSecrets {
-            bip39_entropy: [42; 16],
-            next_receiving_index: 3,
-            next_change_index: 1,
-        };
+        let original = DecryptedWalletSecrets::new([42; 16]);
 
         let encrypted = original
             .encrypt("correct horse")
@@ -488,7 +476,29 @@ mod tests {
             .expect("wallet should decrypt");
 
         assert_eq!(restored.bip39_entropy, original.bip39_entropy);
-        assert_eq!(restored.next_receiving_index, original.next_receiving_index);
-        assert_eq!(restored.next_change_index, original.next_change_index);
+    }
+
+    #[test]
+    fn version_one_wallet_payload_upgrades_to_entropy_only_secrets() {
+        let entropy = [42_u8; 16];
+        let legacy_json = serde_json::json!({
+            "bip39_entropy": entropy,
+            "next_receiving_index": 7,
+            "next_change_index": 3,
+        });
+        let plaintext = serde_json::to_vec(&legacy_json).expect("legacy JSON should serialize");
+        let encrypted = EncryptedWalletSecrets::encrypt(&plaintext, "correct horse")
+            .expect("legacy wallet should encrypt");
+        let encryption_key = encrypted
+            .derive_encryption_key("correct horse")
+            .expect("key should derive");
+
+        // A version 1 payload must not be accepted as a version 2 payload.
+        assert!(encrypted.decrypt_wallet_with_key(&encryption_key).is_err());
+
+        let upgraded = encrypted
+            .decrypt_v1_wallet_with_key(&encryption_key)
+            .expect("version 1 wallet payload should decrypt");
+        assert!(upgraded.matches_entropy(&[42; 16]));
     }
 }

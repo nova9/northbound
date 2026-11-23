@@ -12,11 +12,13 @@ pub fn App() -> Element {
     let unlocked_wallet = use_signal(|| None);
     let selected_wallet = use_signal(|| None);
     let header_messages = use_signal(VecDeque::new);
+    let last_seen_receiving_index = use_signal(|| None);
 
     use_context_provider(|| AppContext {
         unlocked_wallet,
         selected_wallet,
         header_messages,
+        last_seen_receiving_index,
     });
 
     rsx! {

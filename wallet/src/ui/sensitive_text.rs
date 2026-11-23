@@ -1,6 +1,6 @@
 use std::fmt;
 
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 #[derive(Default)]
 pub(super) struct SensitiveText(String);
@@ -13,10 +13,6 @@ impl SensitiveText {
 
     pub(super) fn as_str(&self) -> &str {
         &self.0
-    }
-
-    pub(super) fn snapshot(&self) -> Zeroizing<String> {
-        Zeroizing::new(self.0.clone())
     }
 }
 

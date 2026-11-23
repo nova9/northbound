@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 
 use crate::config::CURRENCY_TICKER;
-use crate::ui::components::{AlertDialog, AlertTone};
 use crate::ui::state::AppContext;
 
 fn copy_address_to_clipboard(address: &str) -> Result<(), String> {
@@ -15,201 +14,191 @@ fn copy_address_to_clipboard(address: &str) -> Result<(), String> {
 
 #[component]
 pub(crate) fn Receive() -> Element {
-    let mut context = use_context::<AppContext>();
+    let context = use_context::<AppContext>();
     let mut copied_address_index = use_signal(|| None::<u32>);
     let mut clipboard_error = use_signal(|| None::<String>);
-    let mut address_creation_error = use_signal(|| None::<String>);
-    let mut show_address_limit_alert = use_signal(|| false);
-    let mut checking_address_limit = use_signal(|| false);
+    let mut refresh_number = use_signal(|| 0_u64);
 
-    let receiving_addresses = {
+    let address_scanner = {
         let unlocked_wallet = context.unlocked_wallet.read();
 
-        let Some(wallet) = unlocked_wallet.as_ref() else {
-            return rsx! {
-                p { "Unlock the wallet to view receiving addresses." }
-            };
-        };
-
-        match wallet.receiving_addresses() {
-            Ok(addresses) => addresses,
-            Err(message) => {
-                return rsx! {
-                    p { class: "error-message", "{message}" }
-                };
-            }
+        match unlocked_wallet.as_ref() {
+            Some(wallet) => Ok(wallet.address_scanner()),
+            None => Err("Unlock the wallet to view receiving addresses.".to_owned()),
         }
     };
+    let wallet_path = context
+        .selected_wallet
+        .read()
+        .as_ref()
+        .map(|wallet| wallet.path.clone());
 
-    let current_address = receiving_addresses.last();
-    let current_address_index = current_address.map(|address| address.index);
+    let receiving_addresses = use_resource(move || {
+        let _refresh_number = refresh_number();
+        let mut context = context;
+        let address_scanner = address_scanner.clone();
+        let wallet_path = wallet_path.clone();
+
+        async move {
+            let scanner = address_scanner?;
+            let addresses = scanner.discover_receiving_addresses().await?;
+            if let (Some(wallet_path), Some(current)) = (wallet_path.as_deref(), addresses.last()) {
+                context.note_active_receiving_index(wallet_path, current.index);
+            }
+            Ok::<_, String>(addresses)
+        }
+    });
 
     rsx! {
         section { class: "screen receive-screen",
-            div { class: "receive-heading",
+            div { class: "transaction-heading receive-heading",
                 div {
                     h1 { "Receive {CURRENCY_TICKER}" }
                     p { class: "lede",
-                        "Share this address to receive {CURRENCY_TICKER}. Create a fresh address for each payment."
+                        "Share your current unused address to receive {CURRENCY_TICKER}."
                     }
+                }
+                button {
+                    class: "button secondary",
+                    r#type: "button",
+                    disabled: receiving_addresses.read().is_none(),
+                    onclick: move |_| refresh_number += 1,
+                    "Refresh"
                 }
             }
 
-            section {
-                class: "address-history",
-                aria_label: "Receiving address history",
-                div { class: "section-heading history-heading",
-                    div {
-                        h2 { "Receiving addresses" }
-                        p { "Every address shown here remains valid." }
+            if let Some(message) = clipboard_error() {
+                p {
+                    class: "error-message address-list-error",
+                    role: "alert",
+                    "{message}"
+                }
+            }
+
+            match &*receiving_addresses.read() {
+                None => rsx! {
+                    div { class: "history-state", role: "status",
+                        strong { "Loading receiving addresses…" }
+                        p { "Checking the server for your latest unused address." }
                     }
-                    div { class: "address-list-actions",
-                        span { class: "address-count", "{receiving_addresses.len()} total" }
-                        button {
-                            class: "button primary compact-button",
-                            r#type: "button",
-                            disabled: checking_address_limit(),
-                            onclick: move |_| {
-                                checking_address_limit.set(true);
-                                address_creation_error.set(None);
-                                show_address_limit_alert.set(false);
+                },
+                Some(Err(message)) => rsx! {
+                    p {
+                        class: "error-message address-list-error",
+                        role: "alert",
+                        "{message}"
+                    }
+                },
+                Some(Ok(addresses)) => {
+                    let Some((current_address, earlier_addresses)) = addresses.split_last() else {
+                        return rsx! {};
+                    };
+                    let current_index = current_address.index;
+                    let current_value = current_address.address.clone();
+                    let current_to_copy = current_value.clone();
+                    let next_index_note = current_index
+                        .checked_add(1)
+                        .map(|next| {
+                            format!(
+                                "Once this address receives a payment, Address {next} will appear automatically."
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            "A new receive address appears automatically once this address receives a payment."
+                                .to_owned()
+                        });
 
-                                spawn(async move {
-                                    let addresses_to_check = {
-                                        let unlocked_wallet = context.unlocked_wallet.read();
-                                        let Some(wallet) = unlocked_wallet.as_ref() else {
-                                            address_creation_error.set(Some("Wallet is locked".to_owned()));
-                                            checking_address_limit.set(false);
-                                            return;
-                                        };
-
-                                        match wallet.recent_receiving_addresses_for_allocation_check() {
-                                            Ok(addresses) => addresses,
+                    rsx! {
+                        section { class: "current-receive-card", aria_label: "Current receive address",
+                            div { class: "current-receive-header",
+                                div { class: "current-receive-title",
+                                    strong { "Address {current_index}" }
+                                    span { class: "address-status current", "Unused · Ready" }
+                                }
+                                button {
+                                    class: "button primary compact-button",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        match copy_address_to_clipboard(&current_to_copy) {
+                                            Ok(()) => {
+                                                copied_address_index.set(Some(current_index));
+                                                clipboard_error.set(None);
+                                            }
                                             Err(message) => {
-                                                address_creation_error.set(Some(message));
-                                                checking_address_limit.set(false);
-                                                return;
+                                                copied_address_index.set(None);
+                                                clipboard_error.set(Some(message));
                                             }
                                         }
-                                    };
-
-                                    let used_addresses = match crate::api::fetch_used_addresses(
-                                            addresses_to_check.clone(),
-                                        )
-                                        .await
-                                    {
-                                        Ok(addresses) => addresses,
-                                        Err(message) => {
-                                            address_creation_error.set(Some(message));
-                                            checking_address_limit.set(false);
-                                            return;
-                                        }
-                                    };
-
-                                    let mut unlocked_wallet = context.unlocked_wallet.write();
-                                    let Some(wallet) = unlocked_wallet.as_mut() else {
-                                        address_creation_error.set(Some("Wallet is locked".to_owned()));
-                                        checking_address_limit.set(false);
-                                        return;
-                                    };
-
-                                    match wallet
-                                        .can_allocate_receiving_address(&addresses_to_check, &used_addresses)
-                                    {
-                                        Ok(true) => {
-                                            match wallet.allocate_and_persist_next_receiving_address() {
-                                                Ok(_) => address_creation_error.set(None),
-                                                Err(message) => address_creation_error.set(Some(message)),
-                                            }
-                                        }
-                                        Ok(false) => show_address_limit_alert.set(true),
-                                        Err(message) => address_creation_error.set(Some(message)),
+                                    },
+                                    if copied_address_index() == Some(current_index) {
+                                        "Copied"
+                                    } else {
+                                        "Copy address"
                                     }
-                                    checking_address_limit.set(false);
-                                });
-                            },
-                            if checking_address_limit() {
-                                "Checking…"
-                            } else if current_address.is_some() {
-                                "New address"
-                            } else {
-                                "Create address"
+                                }
                             }
+
+                            code { class: "current-receive-address", "{current_value}" }
+                            p { class: "current-receive-note", "{next_index_note}" }
                         }
-                    }
-                }
 
-                if let Some(message) = address_creation_error() {
-                    p {
-                        class: "error-message address-list-error",
-                        role: "alert",
-                        "{message}"
-                    }
-                }
-                if let Some(message) = clipboard_error() {
-                    p {
-                        class: "error-message address-list-error",
-                        role: "alert",
-                        "{message}"
-                    }
-                }
-
-                div { class: "address-list",
-                    for receiving_address in receiving_addresses.iter().rev() {
-                        {
-                            let address_index = receiving_address.index;
-                            let address = receiving_address.address.clone();
-                            let address_to_copy = address.clone();
-                            let is_current = current_address_index == Some(address_index);
-
-                            rsx! {
-                                article { class: if is_current { "address-row current-address-row" } else { "address-row" },
-                                    div { class: "address-row-meta",
-                                        strong { "Address {address_index}" }
-                                        if is_current {
-                                            span { class: "address-status current", "Current" }
-                                        } else {
-                                            span { class: "address-status", "Earlier address" }
-                                        }
+                        if !earlier_addresses.is_empty() {
+                            section {
+                                class: "address-history",
+                                aria_label: "Earlier receiving addresses",
+                                div { class: "section-heading history-heading",
+                                    div {
+                                        h2 { "Earlier addresses" }
+                                        p { "Previous addresses remain valid, though using the current unused address is recommended." }
                                     }
+                                    span { class: "address-count", "{earlier_addresses.len()} earlier" }
+                                }
 
-                                    code { "{address}" }
+                                div { class: "address-list",
+                                    for receiving_address in earlier_addresses.iter().rev() {
+                                        {
+                                            let address_index = receiving_address.index;
+                                            let address = receiving_address.address.clone();
+                                            let address_to_copy = address.clone();
 
-                                    button {
-                                        class: "copy-link",
-                                        r#type: "button",
-                                        onclick: move |_| {
-                                            match copy_address_to_clipboard(&address_to_copy) {
-                                                Ok(()) => {
-                                                    copied_address_index.set(Some(address_index));
-                                                    clipboard_error.set(None);
-                                                }
-                                                Err(message) => {
-                                                    copied_address_index.set(None);
-                                                    clipboard_error.set(Some(message));
+                                            rsx! {
+                                                article { class: "address-row",
+                                                    div { class: "address-row-meta",
+                                                        strong { "Address {address_index}" }
+                                                        span { class: "address-status", "Earlier address" }
+                                                    }
+
+                                                    code { "{address}" }
+
+                                                    button {
+                                                        class: "copy-link",
+                                                        r#type: "button",
+                                                        onclick: move |_| {
+                                                            match copy_address_to_clipboard(&address_to_copy) {
+                                                                Ok(()) => {
+                                                                    copied_address_index.set(Some(address_index));
+                                                                    clipboard_error.set(None);
+                                                                }
+                                                                Err(message) => {
+                                                                    copied_address_index.set(None);
+                                                                    clipboard_error.set(Some(message));
+                                                                }
+                                                            }
+                                                        },
+                                                        if copied_address_index() == Some(address_index) {
+                                                            "Copied"
+                                                        } else {
+                                                            "Copy"
+                                                        }
+                                                    }
                                                 }
                                             }
-                                        },
-                                        if copied_address_index() == Some(address_index) {
-                                            "Copied"
-                                        } else {
-                                            "Copy"
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-
-            if show_address_limit_alert() {
-                AlertDialog {
-                    title: "Unused address limit reached",
-                    message: "You can have no more than 19 unused receiving addresses consecutively. Use one of your existing addresses to receive a payment. After it is used, you can create a new address.",
-                    dismiss_label: "Got it",
-                    tone: AlertTone::Information,
-                    on_dismiss: move |_| show_address_limit_alert.set(false),
                 }
             }
         }

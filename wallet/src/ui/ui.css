@@ -233,17 +233,20 @@ select { width: 170px; }
 .transaction-review .button { margin-top: 14px; }
 .transaction-review p { margin: 8px 0; }
 .transaction-id { overflow-wrap: anywhere; }
+.current-receive-card { display: flex; flex-direction: column; gap: 12px; padding: 20px 22px; background: white; border: 1px solid var(--color-border); border-radius: 9px; flex: none; }
+.current-receive-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.current-receive-title { display: flex; align-items: baseline; gap: 10px; font-size: 14px; }
+.current-receive-address { display: block; padding: 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-background); line-height: 1.7; }
+.current-receive-note { font-size: 12px; color: var(--color-text-muted); }
 .address-history { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 16px 0; border-bottom: 1px solid var(--color-border); }
 .section-heading p { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
-.address-list-actions { display: flex; align-items: center; gap: 12px; }
 .address-count { font-size: 12px; color: var(--color-text-muted); }
 .address-list { flex: 1; }
 .address-row { display: grid; grid-template-columns: 115px minmax(0,1fr) 45px; gap: 18px; align-items: center; padding: 18px 12px; border-bottom: 1px solid var(--color-border); }
 .address-row-meta { display: grid; gap: 5px; font-size: 12px; }
 .address-status { font-size: 11px; color: var(--color-text-muted); }
 .address-status.current { color: var(--color-success); }
-.current-address-row { background: #eaf0f8; }
 .address-row code { line-height: 1.7; }
 .address-list-error { padding: 10px 0; }
 .modal-dialog { width: min(420px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 24px; border: 0; border-radius: 8px; color: var(--color-text); background: var(--color-surface); box-shadow: 0 16px 42px rgba(23,35,55,.24); overflow-wrap: anywhere; }
@@ -275,14 +278,20 @@ select { width: 170px; }
 .transaction-status { font-size: 11px; }
 .transaction-status.confirmed { color: var(--color-success); }
 .transaction-detail-amount { margin-top: 14px; font-size: clamp(16px, 2vw, 24px); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.transaction-status-copy { font-size: 12px; color: var(--color-text-muted); margin: 4px 0 20px; }
-.transaction-facts { padding-top: 18px; border-top: 1px solid var(--color-border); display: grid; grid-template-columns: 1fr 1fr; gap: 22px 16px; }
-.transaction-facts dt, .transaction-id > span { display: block; font-size: 11px; color: var(--color-text-muted); margin-bottom: 7px; }
+.transaction-status-copy { font-size: 12px; color: var(--color-text-muted); margin: 4px 0 16px; }
+.transaction-facts { padding-top: 16px; border-top: 1px solid var(--color-border); display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.transaction-facts dt, .transaction-field-heading > span { display: block; font-size: 11px; color: var(--color-text-muted); }
+.transaction-facts dt { margin-bottom: 5px; }
 .transaction-facts dd { margin: 0; font-size: 12px; line-height: 1.6; }
 .transaction-facts > div:has(code) { grid-column: 1/-1; }
-.transaction-id { margin-top: 26px; }
+.transaction-facts dt.transaction-field-heading, .transaction-field-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 5px; }
+.transaction-field-heading .copy-link { padding: 0; }
+.transaction-addresses { display: grid; gap: 8px; }
+.transaction-addresses code { display: block; line-height: 1.7; }
+.transaction-address-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.transaction-address-item .copy-link { flex: none; padding: 0; }
+.transaction-id { margin-top: 16px; }
 .transaction-id code { display: block; line-height: 1.7; }
-.detail-copy { margin-top: 16px; }
 .history-state { padding: 32px 0; font-size: 13px; }
 .history-state p { color: var(--color-text-muted); margin-top: 8px; }
 .connection-status {

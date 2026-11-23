@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::local_wallet::prepare_restored_wallet;
+use crate::local_wallet::save_restored_wallet_and_unlock;
 use crate::ui::components::{ErrorMessage, Field};
 use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
@@ -15,7 +15,6 @@ pub(crate) fn Restore() -> Element {
     let mut password = use_signal(SensitiveText::default);
     let mut password_confirmation = use_signal(SensitiveText::default);
     let mut error = use_signal(|| None::<String>);
-    let mut is_scanning = use_signal(|| false);
 
     rsx! {
         section { class: "screen narrow",
@@ -27,7 +26,6 @@ pub(crate) fn Restore() -> Element {
             div { class: "form-stack",
                 Field {
                     label: "Wallet name", input_type: "text", placeholder: "For example, Savings",
-                    disabled: is_scanning(),
                     value: wallet_name(), oninput: move |value| { wallet_name.set(value); error.set(None); },
                 }
                 Field {
@@ -35,7 +33,6 @@ pub(crate) fn Restore() -> Element {
                     input_type: "text",
                     placeholder: "Twelve recovery words",
                     autocomplete: "off",
-                    disabled: is_scanning(),
                     value: recovery_phrase.read().to_string(),
                     oninput: move |value| {
                         recovery_phrase.write().replace(value);
@@ -44,7 +41,6 @@ pub(crate) fn Restore() -> Element {
                 }
                 Field {
                     label: "New wallet password",
-                    disabled: is_scanning(),
                     input_type: "password",
                     placeholder: "At least 12 characters",
                     value: password.read().to_string(),
@@ -55,7 +51,6 @@ pub(crate) fn Restore() -> Element {
                 }
                 Field {
                     label: "Confirm new password",
-                    disabled: is_scanning(),
                     input_type: "password",
                     placeholder: "Enter the password again",
                     value: password_confirmation.read().to_string(),
@@ -67,56 +62,37 @@ pub(crate) fn Restore() -> Element {
                 button {
                     class: "button primary submit-button",
                     r#type: "button",
-                    disabled: is_scanning(),
                     onclick: move |_| {
-                        if is_scanning() {
-                            return;
+                        let result = (|| {
+                            let directory = crate::config::wallet_directory()?;
+                            let wallet_file =
+                                crate::wallet_catalog::find_new_wallet_path(&directory, &wallet_name())?;
+                            let phrase = recovery_phrase.read();
+                            let wallet_password = password.read();
+                            let confirmation = password_confirmation.read();
+                            let wallet = save_restored_wallet_and_unlock(
+                                &wallet_file.path,
+                                phrase.as_str(),
+                                wallet_password.as_str(),
+                                confirmation.as_str(),
+                            )?;
+
+                            Ok::<_, String>((wallet_file, wallet))
+                        })();
+
+                        match result {
+                            Ok((wallet_file, wallet)) => {
+                                recovery_phrase.write().replace(String::new());
+                                password.write().replace(String::new());
+                                password_confirmation.write().replace(String::new());
+                                context.selected_wallet.set(Some(wallet_file));
+                                context.unlocked_wallet.set(Some(wallet));
+                                navigator.replace(Route::Home);
+                            }
+                            Err(message) => error.set(Some(message)),
                         }
-
-                        let phrase = recovery_phrase.read().snapshot();
-                        let name = wallet_name();
-                        let wallet_password = password.read().snapshot();
-                        let confirmation = password_confirmation.read().snapshot();
-                        error.set(None);
-                        is_scanning.set(true);
-
-                        spawn(async move {
-                            let result = async {
-                                let directory = crate::config::wallet_directory()?;
-                                let wallet_file = crate::wallet_catalog::find_new_wallet_path(&directory, &name)?;
-                                let mut wallet = prepare_restored_wallet(
-                                    &wallet_file.path,
-                                    &phrase,
-                                    &wallet_password,
-                                    &confirmation,
-                                )?;
-                                let indexes = wallet.scan_recovery_address_indexes().await?;
-                                wallet.persist_recovered_address_indexes(indexes)?;
-
-                                Ok::<_, String>((wallet_file, wallet))
-                            }
-                                .await;
-
-                            is_scanning.set(false);
-
-                            match result {
-                                Ok((wallet_file, wallet)) => {
-                                    recovery_phrase.write().replace(String::new());
-                                    password.write().replace(String::new());
-                                    password_confirmation.write().replace(String::new());
-                                    context.selected_wallet.set(Some(wallet_file));
-                                    context.unlocked_wallet.set(Some(wallet));
-                                    navigator.replace(Route::Home);
-                                }
-                                Err(message) => error.set(Some(message)),
-                            }
-                        });
                     },
-                    if is_scanning() {
-                        "Scanning wallet history…"
-                    } else {
-                        "Restore wallet"
-                    }
+                    "Restore wallet"
                 }
             }
 

@@ -9,18 +9,13 @@ use crate::config::MAX_ADDRESSES_PER_REQUEST;
 
 use super::{endpoint, http_client, require_current_index, require_success};
 
-pub async fn fetch_used_addresses(addresses: Vec<String>) -> Result<Vec<String>, String> {
-    if addresses.is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = endpoint("/v1/addresses/activity")?;
-    fetch_used_addresses_from_server(addresses, &url).await
-}
-
-async fn fetch_used_addresses_from_server(
+pub(crate) async fn fetch_used_addresses_from_server(
     addresses: Vec<String>,
     url: &str,
 ) -> Result<Vec<String>, String> {
+    if addresses.is_empty() {
+        return Ok(Vec::new());
+    }
     let addresses = unique_addresses(addresses);
     let client = http_client()?;
     let mut snapshot = None;
@@ -435,7 +430,12 @@ mod tests {
             .build()
             .unwrap();
         runtime.block_on(async {
-            assert!(fetch_used_addresses(Vec::new()).await.unwrap().is_empty());
+            assert!(
+                fetch_used_addresses_from_server(Vec::new(), "http://127.0.0.1:1")
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
             assert!(fetch_utxos(Vec::new()).await.unwrap().is_empty());
         });
     }

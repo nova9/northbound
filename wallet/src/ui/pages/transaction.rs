@@ -6,21 +6,22 @@ use crate::ui::state::AppContext;
 #[component]
 pub(crate) fn Transaction(txid: String) -> Element {
     let context = use_context::<AppContext>();
-    let addresses = {
+    let address_scanner = {
         let wallet = context.unlocked_wallet.read();
 
         match wallet.as_ref() {
-            Some(wallet) => wallet.tracked_addresses(),
+            Some(wallet) => Ok(wallet.address_scanner()),
             None => Err("Unlock the wallet again to load this transaction.".to_owned()),
         }
     };
 
     let transactions = use_resource(move || {
-        let addresses = addresses.clone();
+        let address_scanner = address_scanner.clone();
 
         async move {
-            let addresses = addresses?;
-            crate::api::fetch_transaction_history(addresses).await
+            let scanner = address_scanner?;
+            let discovered = scanner.discover_addresses().await?;
+            crate::api::fetch_transaction_history(discovered.tracked_addresses()).await
         }
     });
 

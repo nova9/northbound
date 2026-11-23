@@ -9,18 +9,51 @@ use shared::WalletUtxo;
 use crate::config::WALLET_NETWORK;
 use crate::keys;
 use crate::p2qrh;
-use crate::wallet_file;
-use crate::wallet_secrets::{
-    DecryptedWalletSecrets, EncryptedWalletSecrets, EncryptionKey, KeyDerivationParameters,
-    SALT_LENGTH,
-};
+use crate::wallet_file::{self, WalletFileVersion};
+use crate::wallet_secrets::DecryptedWalletSecrets;
 
-const RECOVERY_GAP_LIMIT: u32 = 20;
-const MAX_CONSECUTIVE_UNUSED_ADDRESSES: usize = (RECOVERY_GAP_LIMIT - 1) as usize;
+const ADDRESS_DISCOVERY_GAP_LIMIT: u32 = 20;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceivingAddress {
     pub index: u32,
     pub address: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredWalletAddresses {
+    pub receiving_addresses: Vec<ReceivingAddress>,
+    pub change_addresses: Vec<String>,
+}
+
+impl DiscoveredWalletAddresses {
+    pub fn active_receiving_address(&self) -> Result<&ReceivingAddress, String> {
+        self.receiving_addresses
+            .last()
+            .ok_or_else(|| "wallet has no receiving address".to_owned())
+    }
+
+    pub fn active_change_address(&self) -> Result<&str, String> {
+        self.change_addresses
+            .last()
+            .map(String::as_str)
+            .ok_or_else(|| "wallet has no change address".to_owned())
+    }
+
+    pub fn tracked_addresses(&self) -> Vec<String> {
+        let mut addresses =
+            Vec::with_capacity(self.receiving_addresses.len() + self.change_addresses.len());
+
+        for receiving in &self.receiving_addresses {
+            addresses.push(receiving.address.clone());
+        }
+
+        for change in &self.change_addresses {
+            addresses.push(change.clone());
+        }
+
+        addresses
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -38,12 +71,6 @@ pub struct VerifiedUtxo {
 pub enum WalletKeychain {
     Receiving,
     Change,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RecoveredAddressIndexes {
-    pub next_receiving_index: u32,
-    pub next_change_index: u32,
 }
 
 impl VerifiedUtxo {
@@ -71,274 +98,63 @@ pub fn calculate_spendable_balance(utxos: &[VerifiedUtxo]) -> Result<u64, String
     Ok(balance)
 }
 
-pub struct UnlockedWallet {
-    path: PathBuf,
-    secrets: DecryptedWalletSecrets,
-    encryption_key: EncryptionKey,
-    salt: [u8; SALT_LENGTH],
-    key_derivation_parameters: KeyDerivationParameters,
+#[derive(Clone, Debug)]
+pub struct WalletAddressScanner {
+    public_keys: keys::AccountPublicKeys,
 }
 
-impl UnlockedWallet {
-    fn from_encrypted_wallet(
-        path: &Path,
-        encrypted_wallet: &EncryptedWalletSecrets,
-        password: &str,
-    ) -> Result<Self, String> {
-        let encryption_key = encrypted_wallet.derive_encryption_key(password)?;
-        let secrets = encrypted_wallet.decrypt_wallet_with_key(&encryption_key)?;
-        let salt = *encrypted_wallet.salt();
-        let key_derivation_parameters = encrypted_wallet.key_derivation_parameters();
+impl WalletAddressScanner {
+    pub fn from_entropy(entropy: &[u8; 16]) -> Result<Self, String> {
+        let public_keys = keys::AccountPublicKeys::from_entropy(entropy)?;
+        Ok(Self { public_keys })
+    }
 
-        Ok(Self {
-            path: path.to_path_buf(),
-            secrets,
-            encryption_key,
-            salt,
-            key_derivation_parameters,
+    pub async fn discover_addresses(&self) -> Result<DiscoveredWalletAddresses, String> {
+        let receiving_addresses = self.discover_receiving_addresses().await?;
+        let active_change_index = self
+            .scan_keychain_for_active_index(WalletKeychain::Change)
+            .await?;
+        let change_addresses = self.derive_change_addresses_through(active_change_index)?;
+
+        Ok(DiscoveredWalletAddresses {
+            receiving_addresses,
+            change_addresses,
         })
     }
 
-    pub fn receiving_addresses(&self) -> Result<Vec<ReceivingAddress>, String> {
-        let next_index = self.secrets.next_receiving_index();
-        let mut addresses = Vec::new();
-
-        for index in 0..next_index {
-            let address = self.receiving_address_at(index)?;
-
-            addresses.push(ReceivingAddress { index, address });
-        }
-
-        Ok(addresses)
-    }
-
-    pub fn confirms_recovery_phrase(&self, recovery_phrase: &str) -> Result<bool, String> {
-        keys::recovery_phrase_matches_entropy(recovery_phrase, self.secrets.bip39_entropy())
-    }
-
-    pub fn tracked_addresses(&self) -> Result<Vec<String>, String> {
-        let mut addresses = Vec::new();
-
-        for index in 0..self.secrets.next_receiving_index() {
-            addresses.push(self.receiving_address_at(index)?);
-        }
-
-        for index in 0..self.secrets.next_change_index() {
-            addresses.push(self.address_at(WalletKeychain::Change, index)?);
-        }
-
-        Ok(addresses)
+    pub async fn discover_receiving_addresses(&self) -> Result<Vec<ReceivingAddress>, String> {
+        let active_receiving_index = self
+            .scan_keychain_for_active_index(WalletKeychain::Receiving)
+            .await?;
+        self.derive_receiving_addresses_through(active_receiving_index)
     }
 
     pub fn receiving_address_at(&self, index: u32) -> Result<String, String> {
         self.address_at(WalletKeychain::Receiving, index)
     }
 
-    pub fn recent_receiving_addresses_for_allocation_check(&self) -> Result<Vec<String>, String> {
-        let next_index = self.secrets.next_receiving_index();
-        let addresses_to_check = u32::try_from(MAX_CONSECUTIVE_UNUSED_ADDRESSES)
-            .map_err(|_| "receiving address limit is too large".to_owned())?;
-        let first_index = next_index.saturating_sub(addresses_to_check);
-        let mut addresses = Vec::new();
-
-        for index in first_index..next_index {
-            addresses.push(self.receiving_address_at(index)?);
-        }
-
-        Ok(addresses)
+    pub fn change_address_at(&self, index: u32) -> Result<String, String> {
+        self.address_at(WalletKeychain::Change, index)
     }
 
-    pub fn can_allocate_receiving_address(
+    pub fn verify_utxos(
         &self,
-        checked_addresses: &[String],
-        used_addresses: &[String],
-    ) -> Result<bool, String> {
-        let current_addresses = self.recent_receiving_addresses_for_allocation_check()?;
-
-        if checked_addresses != current_addresses {
-            return Err("receiving addresses changed while activity was checked".to_owned());
-        }
-
-        let checked_addresses = checked_addresses.iter().collect::<HashSet<_>>();
-
-        for used_address in used_addresses {
-            if !checked_addresses.contains(used_address) {
-                return Err(
-                    "wallet server returned activity for an address not requested".to_owned(),
-                );
-            }
-        }
-
-        if checked_addresses.len() < MAX_CONSECUTIVE_UNUSED_ADDRESSES {
-            return Ok(true);
-        }
-
-        Ok(!used_addresses.is_empty())
-    }
-
-    pub async fn scan_recovery_address_indexes(&self) -> Result<RecoveredAddressIndexes, String> {
-        let next_receiving_index = self
-            .scan_keychain_for_last_used_address(WalletKeychain::Receiving)
-            .await?;
-        let next_change_index = self
-            .scan_keychain_for_last_used_address(WalletKeychain::Change)
-            .await?;
-
-        Ok(RecoveredAddressIndexes {
-            next_receiving_index,
-            next_change_index,
-        })
-    }
-
-    async fn scan_keychain_for_last_used_address(
-        &self,
-        keychain: WalletKeychain,
-    ) -> Result<u32, String> {
-        let mut batch_start = 0_u32;
-        let mut last_used_index = None;
-
-        loop {
-            let mut addresses = Vec::with_capacity(RECOVERY_GAP_LIMIT as usize);
-
-            for offset in 0..RECOVERY_GAP_LIMIT {
-                let index = batch_start
-                    .checked_add(offset)
-                    .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
-                addresses.push(self.address_at(keychain, index)?);
-            }
-
-            let used_addresses = crate::api::fetch_used_addresses(addresses.clone()).await?;
-            let requested_addresses = addresses.iter().cloned().collect::<HashSet<_>>();
-
-            for address in &used_addresses {
-                if !requested_addresses.contains(address) {
-                    return Err(
-                        "wallet server returned activity for an address not requested".to_owned(),
-                    );
-                }
-            }
-
-            for (offset, address) in addresses.iter().enumerate() {
-                if used_addresses.contains(address) {
-                    let offset = u32::try_from(offset)
-                        .map_err(|_| "wallet recovery batch is too large".to_owned())?;
-                    last_used_index = Some(
-                        batch_start
-                            .checked_add(offset)
-                            .ok_or_else(|| "wallet address index is exhausted".to_owned())?,
-                    );
-                }
-            }
-
-            let batch_end = batch_start
-                .checked_add(RECOVERY_GAP_LIMIT - 1)
-                .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
-            let unused_after_last_used = match last_used_index {
-                Some(index) => batch_end - index,
-                None => batch_end + 1,
-            };
-
-            if unused_after_last_used >= RECOVERY_GAP_LIMIT {
-                return match last_used_index {
-                    Some(index) => index
-                        .checked_add(1)
-                        .ok_or_else(|| "wallet address index is exhausted".to_owned()),
-                    None => Ok(0),
-                };
-            }
-
-            batch_start = batch_start
-                .checked_add(RECOVERY_GAP_LIMIT)
-                .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
-        }
-    }
-
-    fn address_at(&self, keychain: WalletKeychain, index: u32) -> Result<String, String> {
-        let public_key = match keychain {
-            WalletKeychain::Receiving => {
-                keys::derive_receiving_public_key_from_entropy(self.secrets.bip39_entropy(), index)?
-            }
-            WalletKeychain::Change => {
-                keys::derive_change_public_key_from_entropy(self.secrets.bip39_entropy(), index)?
-            }
-        };
-
-        p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
-    }
-
-    pub fn persist_recovered_address_indexes(
-        &mut self,
-        indexes: RecoveredAddressIndexes,
-    ) -> Result<(), String> {
-        let mut updated_secrets = self.secrets.clone();
-        updated_secrets
-            .set_next_address_indexes(indexes.next_receiving_index, indexes.next_change_index);
-
-        let encrypted_wallet = updated_secrets.encrypt_with_key(
-            &self.salt,
-            &self.encryption_key,
-            self.key_derivation_parameters,
-        )?;
-        create_wallet_directory(&self.path)?;
-        wallet_file::save_new(&self.path, &encrypted_wallet)?;
-        self.secrets = updated_secrets;
-
-        Ok(())
-    }
-
-    pub fn allocate_and_persist_next_receiving_address(&mut self) -> Result<String, String> {
-        let index = self.secrets.next_receiving_index();
-        let address = self.receiving_address_at(index)?;
-
-        let mut updated_secrets = self.secrets.clone();
-        updated_secrets.advance_receiving_index()?;
-
-        self.save_updated_secrets(updated_secrets)?;
-        Ok(address)
-    }
-
-    pub fn next_change_address(&self) -> Result<String, String> {
-        self.address_at(WalletKeychain::Change, self.secrets.next_change_index())
-    }
-
-    pub fn reserve_and_persist_next_change_address(&mut self) -> Result<String, String> {
-        let address = self.next_change_address()?;
-        let mut updated_secrets = self.secrets.clone();
-        updated_secrets.advance_change_index()?;
-
-        self.save_updated_secrets(updated_secrets)?;
-        Ok(address)
-    }
-
-    fn save_updated_secrets(
-        &mut self,
-        updated_secrets: DecryptedWalletSecrets,
-    ) -> Result<(), String> {
-        let encrypted_wallet = updated_secrets.encrypt_with_key(
-            &self.salt,
-            &self.encryption_key,
-            self.key_derivation_parameters,
-        )?;
-        wallet_file::save(&self.path, &encrypted_wallet)?;
-        self.secrets = updated_secrets;
-        Ok(())
-    }
-
-    pub fn verify_utxos(&self, utxos: Vec<WalletUtxo>) -> Result<Vec<VerifiedUtxo>, String> {
+        utxos: Vec<WalletUtxo>,
+        discovered: &DiscoveredWalletAddresses,
+    ) -> Result<Vec<VerifiedUtxo>, String> {
         let mut derivation_by_script = HashMap::new();
 
-        for index in 0..self.secrets.next_receiving_index() {
-            let public_key = keys::derive_receiving_public_key_from_entropy(
-                self.secrets.bip39_entropy(),
-                index,
-            )?;
+        for receiving in &discovered.receiving_addresses {
+            let public_key = self.public_keys.receiving_public_key(receiving.index)?;
             let script_pubkey = p2qrh::script_pubkey_from_public_key(&public_key).to_vec();
-            derivation_by_script.insert(script_pubkey, (WalletKeychain::Receiving, index));
+            derivation_by_script
+                .insert(script_pubkey, (WalletKeychain::Receiving, receiving.index));
         }
 
-        for index in 0..self.secrets.next_change_index() {
-            let public_key =
-                keys::derive_change_public_key_from_entropy(self.secrets.bip39_entropy(), index)?;
+        for index in 0..discovered.change_addresses.len() {
+            let index = u32::try_from(index)
+                .map_err(|_| "wallet change address index is exhausted".to_owned())?;
+            let public_key = self.public_keys.change_public_key(index)?;
             let script_pubkey = p2qrh::script_pubkey_from_public_key(&public_key).to_vec();
             derivation_by_script.insert(script_pubkey, (WalletKeychain::Change, index));
         }
@@ -378,6 +194,139 @@ impl UnlockedWallet {
         }
 
         Ok(verified_utxos)
+    }
+
+    async fn scan_keychain_for_active_index(
+        &self,
+        keychain: WalletKeychain,
+    ) -> Result<u32, String> {
+        let url = crate::api::address_activity_endpoint()?;
+        self.scan_keychain_for_active_index_from_server(keychain, &url)
+            .await
+    }
+
+    async fn scan_keychain_for_active_index_from_server(
+        &self,
+        keychain: WalletKeychain,
+        server_url: &str,
+    ) -> Result<u32, String> {
+        let mut batch_start = 0_u32;
+        let mut last_used_index = None;
+
+        loop {
+            let mut addresses = Vec::with_capacity(ADDRESS_DISCOVERY_GAP_LIMIT as usize);
+
+            for offset in 0..ADDRESS_DISCOVERY_GAP_LIMIT {
+                let index = batch_start
+                    .checked_add(offset)
+                    .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
+                addresses.push(self.address_at(keychain, index)?);
+            }
+
+            let used_addresses =
+                crate::api::fetch_used_addresses_from_server(addresses.clone(), server_url).await?;
+            let requested_addresses = addresses.iter().cloned().collect::<HashSet<_>>();
+
+            for address in &used_addresses {
+                if !requested_addresses.contains(address) {
+                    return Err(
+                        "wallet server returned activity for an address not requested".to_owned(),
+                    );
+                }
+            }
+
+            for (offset, address) in addresses.iter().enumerate() {
+                if used_addresses.contains(address) {
+                    let offset = u32::try_from(offset)
+                        .map_err(|_| "wallet address scan batch is too large".to_owned())?;
+                    last_used_index = Some(
+                        batch_start
+                            .checked_add(offset)
+                            .ok_or_else(|| "wallet address index is exhausted".to_owned())?,
+                    );
+                }
+            }
+
+            let batch_end = batch_start
+                .checked_add(ADDRESS_DISCOVERY_GAP_LIMIT - 1)
+                .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
+            let unused_after_last_used = match last_used_index {
+                Some(index) => batch_end - index,
+                None => batch_end + 1,
+            };
+
+            if unused_after_last_used >= ADDRESS_DISCOVERY_GAP_LIMIT {
+                return match last_used_index {
+                    Some(index) => index
+                        .checked_add(1)
+                        .ok_or_else(|| "wallet address index is exhausted".to_owned()),
+                    None => Ok(0),
+                };
+            }
+
+            batch_start = batch_start
+                .checked_add(ADDRESS_DISCOVERY_GAP_LIMIT)
+                .ok_or_else(|| "wallet address index is exhausted".to_owned())?;
+        }
+    }
+
+    fn derive_receiving_addresses_through(
+        &self,
+        last_index: u32,
+    ) -> Result<Vec<ReceivingAddress>, String> {
+        let mut addresses = Vec::new();
+
+        for index in 0..=last_index {
+            let address = self.receiving_address_at(index)?;
+            addresses.push(ReceivingAddress { index, address });
+        }
+
+        Ok(addresses)
+    }
+
+    fn derive_change_addresses_through(&self, last_index: u32) -> Result<Vec<String>, String> {
+        let mut addresses = Vec::new();
+
+        for index in 0..=last_index {
+            addresses.push(self.change_address_at(index)?);
+        }
+
+        Ok(addresses)
+    }
+
+    fn address_at(&self, keychain: WalletKeychain, index: u32) -> Result<String, String> {
+        let public_key = match keychain {
+            WalletKeychain::Receiving => self.public_keys.receiving_public_key(index)?,
+            WalletKeychain::Change => self.public_keys.change_public_key(index)?,
+        };
+
+        p2qrh::address_from_public_key(&public_key, WALLET_NETWORK)
+    }
+}
+
+pub struct UnlockedWallet {
+    path: PathBuf,
+    secrets: DecryptedWalletSecrets,
+    address_scanner: WalletAddressScanner,
+}
+
+impl UnlockedWallet {
+    fn new(path: &Path, secrets: DecryptedWalletSecrets) -> Result<Self, String> {
+        let address_scanner = WalletAddressScanner::from_entropy(secrets.bip39_entropy())?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            secrets,
+            address_scanner,
+        })
+    }
+
+    pub fn address_scanner(&self) -> WalletAddressScanner {
+        self.address_scanner.clone()
+    }
+
+    pub fn confirms_recovery_phrase(&self, recovery_phrase: &str) -> Result<bool, String> {
+        keys::recovery_phrase_matches_entropy(recovery_phrase, self.secrets.bip39_entropy())
     }
 
     pub fn sign_p2qrh_transaction(
@@ -426,15 +375,20 @@ impl UnlockedWallet {
             );
         }
 
-        let encrypted_wallet = wallet_file::load(wallet_path)?;
-        let current_encryption_key = encrypted_wallet.derive_encryption_key(current_password)?;
-        let saved_secrets = encrypted_wallet.decrypt_wallet_with_key(&current_encryption_key)?;
+        let loaded = wallet_file::load(wallet_path)?;
+        let current_encryption_key = loaded
+            .encrypted_wallet
+            .derive_encryption_key(current_password)?;
+        let saved_secrets = match loaded.version {
+            WalletFileVersion::V1 => loaded
+                .encrypted_wallet
+                .decrypt_v1_wallet_with_key(&current_encryption_key)?,
+            WalletFileVersion::V2 => loaded
+                .encrypted_wallet
+                .decrypt_wallet_with_key(&current_encryption_key)?,
+        };
 
-        let saved_wallet_matches = saved_secrets.matches_entropy(self.secrets.bip39_entropy())
-            && saved_secrets.next_receiving_index() == self.secrets.next_receiving_index()
-            && saved_secrets.next_change_index() == self.secrets.next_change_index();
-
-        if !saved_wallet_matches {
+        if !saved_secrets.matches_entropy(self.secrets.bip39_entropy()) {
             return Err(
                 "wallet file changed; unlock the wallet again before changing its password"
                     .to_owned(),
@@ -442,17 +396,7 @@ impl UnlockedWallet {
         }
 
         let updated_encrypted_wallet = self.secrets.encrypt(new_password)?;
-        let updated_encryption_key =
-            updated_encrypted_wallet.derive_encryption_key(new_password)?;
-        let updated_salt = *updated_encrypted_wallet.salt();
-        let updated_key_derivation_parameters =
-            updated_encrypted_wallet.key_derivation_parameters();
-
         wallet_file::save(wallet_path, &updated_encrypted_wallet)?;
-
-        self.encryption_key = updated_encryption_key;
-        self.salt = updated_salt;
-        self.key_derivation_parameters = updated_key_derivation_parameters;
 
         Ok(())
     }
@@ -471,13 +415,7 @@ pub fn save_new_wallet_and_unlock(
         return Err("recovery phrase does not match".to_owned());
     }
 
-    if password.chars().count() < 12 {
-        return Err("wallet password must contain at least 12 characters".to_owned());
-    }
-
-    if password != password_confirmation {
-        return Err("wallet passwords do not match".to_owned());
-    }
+    validate_new_password(password, password_confirmation)?;
 
     if wallet_path.exists() {
         return Err(format!(
@@ -487,8 +425,7 @@ pub fn save_new_wallet_and_unlock(
     }
 
     let encrypted_wallet = pending_wallet.encrypt(password)?;
-    let unlocked_wallet =
-        UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)?;
+    let unlocked_wallet = UnlockedWallet::new(wallet_path, pending_wallet.secrets().clone())?;
 
     create_wallet_directory(wallet_path)?;
     wallet_file::save_new(wallet_path, &encrypted_wallet)?;
@@ -496,16 +433,7 @@ pub fn save_new_wallet_and_unlock(
     Ok(unlocked_wallet)
 }
 
-pub fn load_and_unlock_wallet(
-    wallet_path: &Path,
-    password: &str,
-) -> Result<UnlockedWallet, String> {
-    let encrypted_wallet = wallet_file::load(wallet_path)?;
-
-    UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)
-}
-
-pub fn prepare_restored_wallet(
+pub fn save_restored_wallet_and_unlock(
     wallet_path: &Path,
     recovery_phrase: &str,
     password: &str,
@@ -523,7 +451,42 @@ pub fn prepare_restored_wallet(
     }
 
     let encrypted_wallet = restored_wallet.encrypt(password)?;
-    UnlockedWallet::from_encrypted_wallet(wallet_path, &encrypted_wallet, password)
+    let unlocked_wallet = UnlockedWallet::new(wallet_path, restored_wallet.secrets().clone())?;
+
+    create_wallet_directory(wallet_path)?;
+    wallet_file::save_new(wallet_path, &encrypted_wallet)?;
+
+    Ok(unlocked_wallet)
+}
+
+pub fn load_and_unlock_wallet(
+    wallet_path: &Path,
+    password: &str,
+) -> Result<UnlockedWallet, String> {
+    let loaded = wallet_file::load(wallet_path)?;
+    let encryption_key = loaded.encrypted_wallet.derive_encryption_key(password)?;
+
+    let secrets = match loaded.version {
+        WalletFileVersion::V1 => {
+            let secrets = loaded
+                .encrypted_wallet
+                .decrypt_v1_wallet_with_key(&encryption_key)?;
+            // Upgrade version 1 wallet files in place once decrypted so legacy
+            // address-index counters are removed from disk.
+            let upgraded_wallet = secrets.encrypt_with_key(
+                loaded.encrypted_wallet.salt(),
+                &encryption_key,
+                loaded.encrypted_wallet.key_derivation_parameters(),
+            )?;
+            wallet_file::save(wallet_path, &upgraded_wallet)?;
+            secrets
+        }
+        WalletFileVersion::V2 => loaded
+            .encrypted_wallet
+            .decrypt_wallet_with_key(&encryption_key)?,
+    };
+
+    UnlockedWallet::new(wallet_path, secrets)
 }
 
 fn create_wallet_directory(wallet_path: &Path) -> Result<(), String> {
@@ -550,14 +513,96 @@ fn validate_new_password(password: &str, password_confirmation: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use shared::WalletUtxo;
-    use zeroize::Zeroizing;
 
-    use super::{UnlockedWallet, WalletKeychain};
+    use super::{
+        DiscoveredWalletAddresses, ReceivingAddress, UnlockedWallet, WalletAddressScanner,
+        WalletKeychain,
+    };
     use crate::keys;
     use crate::p2qrh;
+    use crate::wallet_file::{self, WalletFileVersion};
     use crate::wallet_secrets::{
-        CURRENT_KEY_DERIVATION_PARAMETERS, DecryptedWalletSecrets, KeyDerivationParameters,
+        CURRENT_KEY_DERIVATION_PARAMETERS, DecryptedWalletSecrets, EncryptedWalletSecrets,
+        KeyDerivationParameters,
     };
+
+    fn write_version_one_wallet_file(
+        wallet_path: &std::path::Path,
+        entropy: [u8; 16],
+        password: &str,
+        next_receiving_index: u32,
+        next_change_index: u32,
+    ) {
+        let payload = serde_json::json!({
+            "bip39_entropy": entropy,
+            "next_receiving_index": next_receiving_index,
+            "next_change_index": next_change_index,
+        });
+        let encrypted = EncryptedWalletSecrets::encrypt(
+            &serde_json::to_vec(&payload).expect("legacy payload should serialize"),
+            password,
+        )
+        .expect("legacy wallet should encrypt");
+        wallet_file::save(wallet_path, &encrypted).expect("temporary wallet should save");
+        let v1_json = std::fs::read_to_string(wallet_path)
+            .expect("saved wallet should be readable")
+            .replace(r#""version": 2"#, r#""version": 1"#);
+        std::fs::write(wallet_path, v1_json).expect("v1 wallet file should write");
+    }
+
+    #[test]
+    fn unlocking_version_one_wallet_upgrades_file_to_version_two() {
+        let directory = tempfile::tempdir().expect("temporary wallet folder");
+        let wallet_path = directory.path().join("Legacy.json");
+        let pending = keys::generate_new_wallet().expect("wallet should generate");
+        let entropy = *pending.secrets().bip39_entropy();
+
+        write_version_one_wallet_file(&wallet_path, entropy, "legacy password", 9, 4);
+        assert_eq!(
+            wallet_file::load(&wallet_path)
+                .expect("v1 file should load")
+                .version,
+            WalletFileVersion::V1
+        );
+
+        let unlocked = super::load_and_unlock_wallet(&wallet_path, "legacy password")
+            .expect("v1 wallet should unlock and upgrade");
+        assert!(
+            unlocked
+                .confirms_recovery_phrase(pending.recovery_phrase())
+                .expect("phrase check should succeed")
+        );
+
+        let upgraded_contents =
+            std::fs::read_to_string(&wallet_path).expect("upgraded wallet should be readable");
+        assert!(upgraded_contents.contains(r#""version": 2"#));
+
+        let loaded = wallet_file::load(&wallet_path).expect("upgraded file should load");
+        assert_eq!(loaded.version, WalletFileVersion::V2);
+
+        let reopened = super::load_and_unlock_wallet(&wallet_path, "legacy password")
+            .expect("upgraded v2 wallet should unlock");
+        assert!(
+            reopened
+                .confirms_recovery_phrase(pending.recovery_phrase())
+                .expect("phrase check should succeed")
+        );
+    }
+
+    #[test]
+    fn wrong_password_leaves_version_one_wallet_file_untouched() {
+        let directory = tempfile::tempdir().expect("temporary wallet folder");
+        let wallet_path = directory.path().join("Legacy.json");
+
+        write_version_one_wallet_file(&wallet_path, [42_u8; 16], "legacy password", 3, 1);
+        let original = std::fs::read(&wallet_path).expect("v1 wallet should be readable");
+
+        assert!(super::load_and_unlock_wallet(&wallet_path, "wrong password").is_err());
+        assert_eq!(
+            std::fs::read(&wallet_path).expect("wallet should remain readable"),
+            original
+        );
+    }
 
     #[test]
     fn mining_rewards_enter_spendable_balance_at_one_hundred_confirmations() {
@@ -584,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn wallets_keep_their_passwords_and_address_indexes_in_separate_files() {
+    fn wallets_keep_their_passwords_in_separate_files() {
         let directory = tempfile::tempdir().expect("temporary wallet folder");
         let first_path = directory.path().join("Spending.json");
         let second_path = directory.path().join("Savings.json");
@@ -598,7 +643,7 @@ mod tests {
             "first wallet password",
         )
         .expect("save first wallet");
-        let mut second = super::save_new_wallet_and_unlock(
+        let _second = super::save_new_wallet_and_unlock(
             &second_path,
             &second_pending,
             second_pending.recovery_phrase(),
@@ -609,12 +654,6 @@ mod tests {
         let second_before = std::fs::read(&second_path).expect("read second wallet");
 
         first
-            .allocate_and_persist_next_receiving_address()
-            .expect("allocate first address");
-        first
-            .reserve_and_persist_next_change_address()
-            .expect("reserve first change address");
-        first
             .change_password(
                 "first wallet password",
                 "updated first password",
@@ -622,18 +661,11 @@ mod tests {
             )
             .expect("change first password");
         assert_eq!(std::fs::read(&second_path).unwrap(), second_before);
-        second
-            .allocate_and_persist_next_receiving_address()
-            .expect("allocate second address");
 
         assert!(super::load_and_unlock_wallet(&first_path, "first wallet password").is_err());
         assert!(super::load_and_unlock_wallet(&second_path, "updated first password").is_err());
         let first = super::load_and_unlock_wallet(&first_path, "updated first password").unwrap();
         let second = super::load_and_unlock_wallet(&second_path, "second wallet password").unwrap();
-        assert_eq!(first.secrets.next_receiving_index(), 1);
-        assert_eq!(first.secrets.next_change_index(), 1);
-        assert_eq!(second.secrets.next_receiving_index(), 1);
-        assert_eq!(second.secrets.next_change_index(), 0);
         assert!(
             first
                 .confirms_recovery_phrase(first_pending.recovery_phrase())
@@ -647,29 +679,34 @@ mod tests {
     }
 
     #[test]
-    fn restoring_another_wallet_saves_recovered_indexes_to_its_own_file() {
+    fn restoring_another_wallet_saves_to_its_own_version_two_file() {
         let directory = tempfile::tempdir().expect("temporary wallet folder");
         let existing_path = directory.path().join("Existing.json");
         let restored_path = directory.path().join("Restored.json");
         std::fs::write(&existing_path, "leave this wallet untouched").unwrap();
         let pending = keys::generate_new_wallet().expect("wallet phrase");
-        let mut restored = super::prepare_restored_wallet(
+
+        let restored = super::save_restored_wallet_and_unlock(
             &restored_path,
             pending.recovery_phrase(),
             "restored password",
             "restored password",
         )
-        .expect("prepare restoration");
-        assert!(!restored_path.exists());
-        restored
-            .persist_recovered_address_indexes(super::RecoveredAddressIndexes {
-                next_receiving_index: 7,
-                next_change_index: 3,
-            })
-            .expect("save restored wallet");
-        let loaded = super::load_and_unlock_wallet(&restored_path, "restored password").unwrap();
-        assert_eq!(loaded.secrets.next_receiving_index(), 7);
-        assert_eq!(loaded.secrets.next_change_index(), 3);
+        .expect("restore wallet");
+        assert!(
+            restored
+                .confirms_recovery_phrase(pending.recovery_phrase())
+                .unwrap()
+        );
+
+        let loaded = wallet_file::load(&restored_path).unwrap();
+        assert_eq!(loaded.version, WalletFileVersion::V2);
+        let reopened = super::load_and_unlock_wallet(&restored_path, "restored password").unwrap();
+        assert!(
+            reopened
+                .confirms_recovery_phrase(pending.recovery_phrase())
+                .unwrap()
+        );
         assert_eq!(
             std::fs::read_to_string(existing_path).unwrap(),
             "leave this wallet untouched"
@@ -677,25 +714,20 @@ mod tests {
     }
 
     #[test]
-    fn restoration_cannot_overwrite_a_wallet_created_while_scanning() {
+    fn restoration_cannot_overwrite_an_existing_wallet_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("Restored.json");
         let pending = keys::generate_new_wallet().unwrap();
-        let mut restored = super::prepare_restored_wallet(
-            &path,
-            pending.recovery_phrase(),
-            "restored password",
-            "restored password",
-        )
-        .unwrap();
         std::fs::write(&path, "another wallet was created here").unwrap();
+
         assert!(
-            restored
-                .persist_recovered_address_indexes(super::RecoveredAddressIndexes {
-                    next_receiving_index: 1,
-                    next_change_index: 0,
-                })
-                .is_err()
+            super::save_restored_wallet_and_unlock(
+                &path,
+                pending.recovery_phrase(),
+                "restored password",
+                "restored password",
+            )
+            .is_err()
         );
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
@@ -709,15 +741,8 @@ mod tests {
         let wallet_path = directory.path().join("Test.json");
         let pending_wallet = keys::generate_new_wallet().expect("wallet should be generated");
         let recovery_phrase = pending_wallet.recovery_phrase().to_owned();
-        let encrypted_wallet = pending_wallet
-            .encrypt("a secure test password")
-            .expect("wallet should be encrypted");
-        let unlocked_wallet = UnlockedWallet::from_encrypted_wallet(
-            &wallet_path,
-            &encrypted_wallet,
-            "a secure test password",
-        )
-        .expect("wallet should unlock");
+        let unlocked_wallet = UnlockedWallet::new(&wallet_path, pending_wallet.secrets().clone())
+            .expect("wallet should unlock");
 
         let phrase_matches = unlocked_wallet
             .confirms_recovery_phrase(&recovery_phrase)
@@ -733,15 +758,8 @@ mod tests {
         let pending_wallet = keys::generate_new_wallet().expect("wallet should be generated");
         let other_wallet = keys::generate_new_wallet().expect("second wallet should be generated");
         let other_recovery_phrase = other_wallet.recovery_phrase().to_owned();
-        let encrypted_wallet = pending_wallet
-            .encrypt("a secure test password")
-            .expect("wallet should be encrypted");
-        let unlocked_wallet = UnlockedWallet::from_encrypted_wallet(
-            &wallet_path,
-            &encrypted_wallet,
-            "a secure test password",
-        )
-        .expect("wallet should unlock");
+        let unlocked_wallet = UnlockedWallet::new(&wallet_path, pending_wallet.secrets().clone())
+            .expect("wallet should unlock");
 
         let phrase_matches = unlocked_wallet
             .confirms_recovery_phrase(&other_recovery_phrase)
@@ -752,17 +770,13 @@ mod tests {
 
     #[test]
     fn utxo_is_mapped_to_its_receiving_derivation_index() {
-        let mut secrets = DecryptedWalletSecrets::new([0_u8; 16]);
-        secrets
-            .advance_receiving_index()
-            .expect("first receiving address should be allocated");
-
-        let wallet = UnlockedWallet {
-            path: std::path::PathBuf::new(),
-            secrets,
-            encryption_key: Zeroizing::new([7_u8; 32]),
-            salt: [9_u8; 16],
-            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
+        let scanner = WalletAddressScanner::from_entropy(&[0_u8; 16]).expect("scanner");
+        let discovered = DiscoveredWalletAddresses {
+            receiving_addresses: vec![ReceivingAddress {
+                index: 0,
+                address: scanner.receiving_address_at(0).expect("address 0"),
+            }],
+            change_addresses: vec![scanner.change_address_at(0).expect("change 0")],
         };
 
         let public_key = keys::derive_receiving_public_key_from_entropy(&[0_u8; 16], 0)
@@ -779,8 +793,8 @@ mod tests {
             coinbase: false,
         };
 
-        let verified = wallet
-            .verify_utxos(vec![server_utxo])
+        let verified = scanner
+            .verify_utxos(vec![server_utxo], &discovered)
             .expect("wallet should recognize its output");
 
         assert_eq!(verified.len(), 1);
@@ -791,17 +805,13 @@ mod tests {
 
     #[test]
     fn utxo_is_mapped_to_its_change_derivation_index() {
-        let mut secrets = DecryptedWalletSecrets::new([0_u8; 16]);
-        secrets
-            .advance_change_index()
-            .expect("first change address should be reserved");
-
-        let wallet = UnlockedWallet {
-            path: std::path::PathBuf::new(),
-            secrets,
-            encryption_key: Zeroizing::new([7_u8; 32]),
-            salt: [9_u8; 16],
-            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
+        let scanner = WalletAddressScanner::from_entropy(&[0_u8; 16]).expect("scanner");
+        let discovered = DiscoveredWalletAddresses {
+            receiving_addresses: vec![ReceivingAddress {
+                index: 0,
+                address: scanner.receiving_address_at(0).expect("address 0"),
+            }],
+            change_addresses: vec![scanner.change_address_at(0).expect("change 0")],
         };
         let public_key = keys::derive_change_public_key_from_entropy(&[0_u8; 16], 0)
             .expect("test change key should derive");
@@ -817,90 +827,13 @@ mod tests {
             coinbase: false,
         };
 
-        let verified = wallet
-            .verify_utxos(vec![server_utxo])
+        let verified = scanner
+            .verify_utxos(vec![server_utxo], &discovered)
             .expect("wallet should recognize its change output");
 
         assert_eq!(verified[0].keychain, WalletKeychain::Change);
         assert_eq!(verified[0].derivation_index, 0);
         assert_eq!(verified[0].amount.to_sat(), 899_998_360);
-    }
-
-    #[test]
-    fn next_change_address_is_stable_until_reserved() {
-        let wallet = UnlockedWallet {
-            path: std::path::PathBuf::new(),
-            secrets: DecryptedWalletSecrets::new([0_u8; 16]),
-            encryption_key: Zeroizing::new([7_u8; 32]),
-            salt: [9_u8; 16],
-            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
-        };
-
-        let first = wallet
-            .next_change_address()
-            .expect("first change address should derive");
-        let second = wallet
-            .next_change_address()
-            .expect("same change address should derive again");
-
-        assert_eq!(first, second);
-        assert!(p2qrh::script_pubkey_from_address(&first, crate::config::WALLET_NETWORK).is_ok());
-    }
-
-    #[test]
-    fn receiving_address_allocation_stops_after_nineteen_unused_addresses() {
-        let mut secrets = DecryptedWalletSecrets::new([0_u8; 16]);
-
-        for _ in 0..19 {
-            secrets
-                .advance_receiving_index()
-                .expect("test receiving address should be allocated");
-        }
-
-        let wallet = UnlockedWallet {
-            path: std::path::PathBuf::new(),
-            secrets,
-            encryption_key: Zeroizing::new([7_u8; 32]),
-            salt: [9_u8; 16],
-            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
-        };
-        let checked_addresses = wallet
-            .recent_receiving_addresses_for_allocation_check()
-            .expect("recent receiving addresses should derive");
-
-        assert_eq!(checked_addresses.len(), 19);
-        assert_eq!(
-            wallet.can_allocate_receiving_address(&checked_addresses, &[]),
-            Ok(false)
-        );
-    }
-
-    #[test]
-    fn used_address_allows_another_receiving_address() {
-        let mut secrets = DecryptedWalletSecrets::new([0_u8; 16]);
-
-        for _ in 0..19 {
-            secrets
-                .advance_receiving_index()
-                .expect("test receiving address should be allocated");
-        }
-
-        let wallet = UnlockedWallet {
-            path: std::path::PathBuf::new(),
-            secrets,
-            encryption_key: Zeroizing::new([7_u8; 32]),
-            salt: [9_u8; 16],
-            key_derivation_parameters: CURRENT_KEY_DERIVATION_PARAMETERS,
-        };
-        let checked_addresses = wallet
-            .recent_receiving_addresses_for_allocation_check()
-            .expect("recent receiving addresses should derive");
-        let used_addresses = vec![checked_addresses[0].clone()];
-
-        assert_eq!(
-            wallet.can_allocate_receiving_address(&checked_addresses, &used_addresses),
-            Ok(true)
-        );
     }
 
     #[test]
@@ -911,13 +844,9 @@ mod tests {
         let encrypted_wallet = secrets
             .encrypt("current password")
             .expect("test wallet should encrypt");
-        crate::wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
-        let mut wallet = UnlockedWallet::from_encrypted_wallet(
-            &wallet_path,
-            &encrypted_wallet,
-            "current password",
-        )
-        .expect("test wallet should unlock");
+        wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
+        let mut wallet = super::load_and_unlock_wallet(&wallet_path, "current password")
+            .expect("test wallet should unlock");
 
         wallet
             .change_password_at_path(
@@ -928,10 +857,19 @@ mod tests {
             )
             .expect("wallet password should change");
 
-        let saved_wallet =
-            crate::wallet_file::load(&wallet_path).expect("changed wallet should load");
-        assert!(saved_wallet.decrypt_wallet("current password").is_err());
-        assert!(saved_wallet.decrypt_wallet("replacement password").is_ok());
+        let saved_wallet = wallet_file::load(&wallet_path).expect("changed wallet should load");
+        assert!(
+            saved_wallet
+                .encrypted_wallet
+                .decrypt_wallet("current password")
+                .is_err()
+        );
+        assert!(
+            saved_wallet
+                .encrypted_wallet
+                .decrypt_wallet("replacement password")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -944,14 +882,9 @@ mod tests {
         let encrypted_wallet = secrets
             .encrypt_with_parameters("current password", legacy_parameters)
             .expect("legacy wallet should encrypt");
-        crate::wallet_file::save(&wallet_path, &encrypted_wallet)
-            .expect("legacy wallet should save");
-        let mut wallet = UnlockedWallet::from_encrypted_wallet(
-            &wallet_path,
-            &encrypted_wallet,
-            "current password",
-        )
-        .expect("legacy wallet should unlock");
+        wallet_file::save(&wallet_path, &encrypted_wallet).expect("legacy wallet should save");
+        let mut wallet = super::load_and_unlock_wallet(&wallet_path, "current password")
+            .expect("legacy wallet should unlock");
 
         wallet
             .change_password_at_path(
@@ -962,13 +895,17 @@ mod tests {
             )
             .expect("wallet password should change");
 
-        let saved_wallet =
-            crate::wallet_file::load(&wallet_path).expect("upgraded wallet should load");
+        let saved_wallet = wallet_file::load(&wallet_path).expect("upgraded wallet should load");
         assert_eq!(
-            saved_wallet.key_derivation_parameters(),
+            saved_wallet.encrypted_wallet.key_derivation_parameters(),
             CURRENT_KEY_DERIVATION_PARAMETERS
         );
-        assert!(saved_wallet.decrypt_wallet("replacement password").is_ok());
+        assert!(
+            saved_wallet
+                .encrypted_wallet
+                .decrypt_wallet("replacement password")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -979,13 +916,9 @@ mod tests {
         let encrypted_wallet = secrets
             .encrypt("current password")
             .expect("test wallet should encrypt");
-        crate::wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
-        let mut wallet = UnlockedWallet::from_encrypted_wallet(
-            &wallet_path,
-            &encrypted_wallet,
-            "current password",
-        )
-        .expect("test wallet should unlock");
+        wallet_file::save(&wallet_path, &encrypted_wallet).expect("test wallet should save");
+        let mut wallet = super::load_and_unlock_wallet(&wallet_path, "current password")
+            .expect("test wallet should unlock");
 
         let result = wallet.change_password_at_path(
             &wallet_path,
@@ -996,8 +929,102 @@ mod tests {
 
         assert!(result.is_err());
         let saved_wallet =
-            crate::wallet_file::load(&wallet_path).expect("original wallet should still load");
-        assert!(saved_wallet.decrypt_wallet("current password").is_ok());
-        assert!(saved_wallet.decrypt_wallet("replacement password").is_err());
+            wallet_file::load(&wallet_path).expect("original wallet should still load");
+        assert!(
+            saved_wallet
+                .encrypted_wallet
+                .decrypt_wallet("current password")
+                .is_ok()
+        );
+        assert!(
+            saved_wallet
+                .encrypted_wallet
+                .decrypt_wallet("replacement password")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn address_discovery_finds_first_unused_index_across_gap_batches() {
+        let scanner = WalletAddressScanner::from_entropy(&[0_u8; 16]).expect("scanner");
+        let addr_0 = scanner.receiving_address_at(0).unwrap();
+        let addr_19 = scanner.receiving_address_at(19).unwrap();
+        let addr_20 = scanner.receiving_address_at(20).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        // Unused wallet: returns active index 0 in a single batch.
+        let (url, server) = crate::api::test_support::serve(1, |_, _| {
+            (
+                200,
+                serde_json::json!({
+                    "used_addresses": [],
+                    "index": crate::api::test_support::index(),
+                }),
+            )
+        });
+        let index = runtime
+            .block_on(
+                scanner.scan_keychain_for_active_index_from_server(WalletKeychain::Receiving, &url),
+            )
+            .unwrap();
+        assert_eq!(index, 0);
+        server.join().unwrap();
+
+        // Address 0 and 19 used: scans batches 0..20 and 20..40, stops with active index 20.
+        let used_set = vec![addr_0.clone(), addr_19.clone()];
+        let (url, server) = crate::api::test_support::serve(2, move |_, request| {
+            let used = request["addresses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|address| used_set.iter().any(|used| used == address))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            (
+                200,
+                serde_json::json!({
+                    "used_addresses": used,
+                    "index": crate::api::test_support::index(),
+                }),
+            )
+        });
+        let index = runtime
+            .block_on(
+                scanner.scan_keychain_for_active_index_from_server(WalletKeychain::Receiving, &url),
+            )
+            .unwrap();
+        assert_eq!(index, 20);
+        server.join().unwrap();
+
+        // Address 19 and 20 used: scans 0..20, 20..40, and 40..60, stops with active index 21.
+        let used_set = vec![addr_19, addr_20];
+        let (url, server) = crate::api::test_support::serve(3, move |_, request| {
+            let used = request["addresses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|address| used_set.iter().any(|used| used == address))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            (
+                200,
+                serde_json::json!({
+                    "used_addresses": used,
+                    "index": crate::api::test_support::index(),
+                }),
+            )
+        });
+        let index = runtime
+            .block_on(
+                scanner.scan_keychain_for_active_index_from_server(WalletKeychain::Receiving, &url),
+            )
+            .unwrap();
+        assert_eq!(index, 21);
+        server.join().unwrap();
     }
 }

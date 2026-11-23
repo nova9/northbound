@@ -4,7 +4,6 @@ use super::ModalDialog;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum AlertTone {
-    Information,
     Success,
     Danger,
 }
@@ -18,7 +17,6 @@ pub(crate) fn AlertDialog(
     on_dismiss: EventHandler<()>,
 ) -> Element {
     let tone_class = match tone {
-        AlertTone::Information => "alert-dialog information",
         AlertTone::Success => "alert-dialog success",
         AlertTone::Danger => "alert-dialog danger",
     };

@@ -32,6 +32,7 @@ async fn fetch_transaction_history_from_server(
         let mut transactions = HashMap::new();
         let mut snapshot: Option<IndexStatus> = None;
         for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
+            let requested_in_batch = batch.iter().map(String::as_str).collect::<HashSet<_>>();
             let mut cursor = None;
             let mut seen_cursors = HashSet::new();
             let mut seen_transactions = HashSet::new();
@@ -82,7 +83,7 @@ async fn fetch_transaction_history_from_server(
                 {
                     return Err("The wallet server returned an invalid history page.".into());
                 }
-                for transaction in page.transactions {
+                for mut transaction in page.transactions {
                     // Repetition across address batches is expected. Within a
                     // batch's pages it would count the same contribution twice.
                     if !seen_transactions.insert(transaction.transaction_id.clone()) {
@@ -91,6 +92,15 @@ async fn fetch_transaction_history_from_server(
                                 .into(),
                         );
                     }
+                    for address in &transaction.received_addresses {
+                        if !requested_in_batch.contains(address.as_str()) {
+                            return Err(
+                                "The wallet server returned an unrequested address in transaction history."
+                                    .into(),
+                            );
+                        }
+                    }
+                    normalize_addresses(&mut transaction.received_addresses);
                     let height = transaction.block_height.unwrap_or(u64::MAX);
                     if let Some((previous_height, previous_id)) = &previous_position {
                         if height > *previous_height
@@ -147,7 +157,16 @@ fn merge_transaction(
         .net_amount
         .checked_add(incoming.net_amount)
         .ok_or_else(|| "Combined history net amount overflow.".to_owned())?;
+    existing
+        .received_addresses
+        .extend(incoming.received_addresses);
+    normalize_addresses(&mut existing.received_addresses);
     Ok(())
+}
+
+fn normalize_addresses(addresses: &mut Vec<String>) {
+    addresses.sort();
+    addresses.dedup();
 }
 
 #[cfg(test)]
@@ -306,6 +325,33 @@ mod tests {
             history.last().unwrap().transaction_id,
             format!("{:064x}", total - 1)
         );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn merges_received_addresses_across_batches_and_rejects_unrequested_addresses() {
+        let (url, server) = serve(2, |number, _| {
+            let mut tx = transaction(1, 100_000_000);
+            tx["received_addresses"] = if number == 0 {
+                json!(["address-1", "address-0", "address-1"])
+            } else {
+                json!(["address-100"])
+            };
+            (200, page(vec![tx], None))
+        });
+        let history = fetch(addresses(101), &url).unwrap();
+        assert_eq!(
+            history[0].received_addresses,
+            vec!["address-0", "address-1", "address-100"]
+        );
+        server.join().unwrap();
+
+        let (url, server) = serve(1, |_, _| {
+            let mut tx = transaction(1, 100_000_000);
+            tx["received_addresses"] = json!(["unrequested-address"]);
+            (200, page(vec![tx], None))
+        });
+        assert!(fetch(addresses(1), &url).is_err());
         server.join().unwrap();
     }
 

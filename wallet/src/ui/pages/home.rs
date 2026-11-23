@@ -1,11 +1,17 @@
 use dioxus::prelude::*;
 
 use crate::config::CURRENCY_TICKER;
-use crate::local_wallet::calculate_spendable_balance;
+use crate::local_wallet::{ReceivingAddress, calculate_spendable_balance};
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
 
 const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
+
+struct OverviewData {
+    current_address: ReceivingAddress,
+    total_balance: Result<u64, String>,
+    spendable_balance: Result<u64, String>,
+}
 
 #[component]
 pub(crate) fn Home() -> Element {
@@ -31,54 +37,55 @@ pub(crate) fn Home() -> Element {
         navigator.replace(destination);
     });
 
-    let wallet_state = {
+    let address_scanner = {
         let wallet = context.unlocked_wallet.read();
-
-        wallet.as_ref().map(|wallet| {
-            let addresses = wallet.tracked_addresses();
-            let current_address = wallet
-                .receiving_addresses()
-                .map(|mut addresses| addresses.pop());
-
-            (addresses, current_address)
-        })
+        wallet.as_ref().map(|wallet| wallet.address_scanner())
     };
 
-    let Some((addresses, current_address)) = wallet_state else {
+    let Some(address_scanner) = address_scanner else {
         return rsx! {};
     };
 
-    let history_addresses = addresses.clone();
-    let total_balance = use_resource(move || {
-        let addresses = history_addresses.clone();
+    let wallet_path = context
+        .selected_wallet
+        .read()
+        .as_ref()
+        .map(|wallet| wallet.path.clone());
+
+    let overview = use_resource(move || {
+        let mut context = context;
+        let scanner = address_scanner.clone();
+        let wallet_path = wallet_path.clone();
 
         async move {
-            let transactions = crate::api::fetch_transaction_history(addresses?).await?;
-            calculate_total_balance(&transactions)
+            let discovered = scanner.discover_addresses().await?;
+            let current_address = discovered.active_receiving_address()?.clone();
+            if let Some(wallet_path) = wallet_path.as_deref() {
+                context.note_active_receiving_index(wallet_path, current_address.index);
+            }
+            let tracked_addresses = discovered.tracked_addresses();
+
+            let total_balance =
+                match crate::api::fetch_transaction_history(tracked_addresses.clone()).await {
+                    Ok(transactions) => calculate_total_balance(&transactions),
+                    Err(message) => Err(message),
+                };
+            let spendable_balance = match crate::api::fetch_utxos(tracked_addresses).await {
+                Ok(utxos) => scanner
+                    .verify_utxos(utxos, &discovered)
+                    .and_then(|utxos| calculate_spendable_balance(&utxos)),
+                Err(message) => Err(message),
+            };
+
+            Ok::<_, String>(OverviewData {
+                current_address,
+                total_balance,
+                spendable_balance,
+            })
         }
     });
-    let utxos = use_resource(move || {
-        let addresses = addresses.clone();
 
-        async move {
-            let addresses = addresses?;
-            crate::api::fetch_utxos(addresses).await
-        }
-    });
-    let balance = match &*utxos.read() {
-        None => None,
-        Some(Err(message)) => Some(Err(message.clone())),
-        Some(Ok(utxos)) => {
-            let wallet = context.unlocked_wallet.read();
-            let verified = wallet
-                .as_ref()
-                .ok_or_else(|| "Unlock the wallet again to verify the balance.".to_owned())
-                .and_then(|wallet| wallet.verify_utxos(utxos.clone()))
-                .and_then(|utxos| calculate_spendable_balance(&utxos));
-
-            Some(verified)
-        }
-    };
+    let overview_read = overview.read();
 
     rsx! {
         section { class: "screen overview-screen",
@@ -87,13 +94,18 @@ pub(crate) fn Home() -> Element {
                     h1 { "Total balance" }
                 }
                 div { class: "amount-row",
-                    match &*total_balance.read() {
+                    match &*overview_read {
                         None => rsx! {
                             strong { class: "amount", "Loading…" }
                         },
-                        Some(Ok(amount)) => rsx! {
-                            strong { class: "amount", "{format_north(*amount)}" }
-                            span { class: "currency", "{CURRENCY_TICKER}" }
+                        Some(Ok(data)) => match &data.total_balance {
+                            Ok(amount) => rsx! {
+                                strong { class: "amount", "{format_north(*amount)}" }
+                                span { class: "currency", "{CURRENCY_TICKER}" }
+                            },
+                            Err(_) => rsx! {
+                                strong { class: "amount", "Unavailable" }
+                            },
                         },
                         Some(Err(_)) => rsx! {
                             strong { class: "amount", "Unavailable" }
@@ -101,20 +113,35 @@ pub(crate) fn Home() -> Element {
                     }
                 }
                 p { class: "muted", "Includes pending transactions and immature mining rewards." }
-                if let Some(Err(message)) = &*total_balance.read() {
-                    p { class: "error-message", role: "alert", "Could not load total balance: {message}" }
+                match &*overview_read {
+                    Some(Err(message)) => rsx! {
+                        p { class: "error-message", role: "alert", "Could not load wallet data: {message}" }
+                    },
+                    Some(Ok(data)) => {
+                        if let Err(message) = &data.total_balance {
+                            rsx! {
+                                p { class: "error-message", role: "alert", "Could not load total balance: {message}" }
+                            }
+                        } else {
+                            rsx! {}
+                        }
+                    }
+                    None => rsx! {},
                 }
                 dl { class: "spendable-balance",
                     dt { "Available to spend" }
                     dd {
-                        match &balance {
+                        match &*overview_read {
                             None => rsx! { span { class: "muted", "Loading…" } },
-                            Some(Ok(amount)) => rsx! {
-                                strong { "{format_north(*amount)}" }
-                                span { class: "currency", "{CURRENCY_TICKER}" }
-                            },
-                            Some(Err(message)) => rsx! {
-                                p { class: "error-message", role: "alert", "Could not load spendable balance: {message}" }
+                            Some(Err(_)) => rsx! { span { class: "muted", "Unavailable" } },
+                            Some(Ok(data)) => match &data.spendable_balance {
+                                Ok(amount) => rsx! {
+                                    strong { "{format_north(*amount)}" }
+                                    span { class: "currency", "{CURRENCY_TICKER}" }
+                                },
+                                Err(message) => rsx! {
+                                    p { class: "error-message", role: "alert", "Could not load spendable balance: {message}" }
+                                },
                             },
                         }
                     }
@@ -161,15 +188,17 @@ pub(crate) fn Home() -> Element {
                             "Manage addresses"
                         }
                     }
-                    match current_address {
-                        Ok(Some(address)) => rsx! {
-                            code { class: "overview-address", "{address.address}" }
-                            p { class: "address-caption", "Address {address.index} · Ready to receive" }
+                    match &*overview_read {
+                        None => rsx! {
+                            p { class: "empty-copy", "Loading receiving address…" }
                         },
-                        Ok(None) => rsx! {
-                            p { class: "empty-copy", "Create your first address before receiving {CURRENCY_TICKER}." }
+                        Some(Ok(data)) => rsx! {
+                            code { class: "overview-address", "{data.current_address.address}" }
+                            p { class: "address-caption",
+                                "Address {data.current_address.index} · Unused · Advances automatically after payment"
+                            }
                         },
-                        Err(message) => rsx! {
+                        Some(Err(message)) => rsx! {
                             p { class: "error-message", role: "alert", "Could not load receiving address: {message}" }
                         },
                     }
@@ -219,6 +248,7 @@ mod tests {
             block_height: None,
             confirmations: 0,
             timestamp: None,
+            received_addresses: Vec::new(),
         };
         let mining_reward = WalletTransaction {
             transaction_id: "02".repeat(32),
@@ -228,6 +258,7 @@ mod tests {
             block_height: Some(26_073),
             confirmations: 802,
             timestamp: None,
+            received_addresses: Vec::new(),
         };
 
         assert_eq!(

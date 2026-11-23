@@ -19,6 +19,12 @@ enum SendState {
     Uncertain(String),
 }
 
+#[derive(Clone)]
+struct SpendableFunds {
+    verified_utxos: Vec<VerifiedUtxo>,
+    change_address: String,
+}
+
 struct SignedTransaction {
     transaction_hex: String,
     transaction_id: String,
@@ -26,49 +32,45 @@ struct SignedTransaction {
 
 #[component]
 pub(crate) fn Send() -> Element {
-    let mut context = use_context::<AppContext>();
+    let context = use_context::<AppContext>();
     let mut recipient = use_signal(String::new);
     let mut amount = use_signal(String::new);
     let mut validation_error = use_signal(|| None::<String>);
     let mut transaction_plan = use_signal(|| None::<TransactionPlan>);
     let mut send_state = use_signal(|| SendState::Ready);
 
-    let addresses = {
+    let address_scanner = {
         let wallet = context.unlocked_wallet.read();
 
         match wallet.as_ref() {
-            Some(wallet) => wallet.tracked_addresses(),
+            Some(wallet) => Ok(wallet.address_scanner()),
             None => Err("Unlock the wallet again to load spendable funds.".to_owned()),
         }
     };
 
-    let utxos = use_resource(move || {
-        let addresses = addresses.clone();
+    let spendable_funds = use_resource(move || {
+        let address_scanner = address_scanner.clone();
 
         async move {
-            let addresses = addresses?;
-            crate::api::fetch_utxos(addresses).await
+            let scanner = address_scanner?;
+            let discovered = scanner.discover_addresses().await?;
+            let utxos = crate::api::fetch_utxos(discovered.tracked_addresses()).await?;
+            let verified_utxos = scanner.verify_utxos(utxos, &discovered)?;
+            let change_address = discovered.active_change_address()?.to_owned();
+
+            Ok::<_, String>(SpendableFunds {
+                verified_utxos,
+                change_address,
+            })
         }
     });
     let fee_estimate = use_resource(crate::api::fetch_fee_estimate);
 
-    let verified_utxos_state = match &*utxos.read() {
-        None => None,
-        Some(Err(message)) => Some(Err(message.clone())),
-        Some(Ok(utxos)) => {
-            let wallet = context.unlocked_wallet.read();
-            let verified_utxos = wallet
-                .as_ref()
-                .ok_or_else(|| "Unlock the wallet again to verify spendable funds.".to_owned())
-                .and_then(|wallet| wallet.verify_utxos(utxos.clone()));
-
-            Some(verified_utxos)
-        }
-    };
-    let available_balance = verified_utxos_state
+    let spendable_funds_state = spendable_funds.read().clone();
+    let available_balance = spendable_funds_state
         .as_ref()
-        .and_then(|utxos| utxos.as_ref().ok())
-        .and_then(|utxos| calculate_spendable_balance(utxos).ok());
+        .and_then(|funds| funds.as_ref().ok())
+        .and_then(|funds| calculate_spendable_balance(&funds.verified_utxos).ok());
     let fee_estimate_state = fee_estimate.read().clone();
     let atomic_units_per_kvbyte = fee_estimate_state
         .as_ref()
@@ -122,9 +124,8 @@ pub(crate) fn Send() -> Element {
                         let result = prepare_transaction_plan(
                             &recipient(),
                             &amount(),
-                            &verified_utxos_state,
+                            &spendable_funds_state,
                             atomic_units_per_kvbyte,
-                            &context,
                         );
 
                         match result {
@@ -177,7 +178,7 @@ pub(crate) fn Send() -> Element {
                             span { "{CURRENCY_TICKER}" }
                         }
                         small {
-                            match &verified_utxos_state {
+                            match &spendable_funds_state {
                                 None => "Loading spendable balance…".to_owned(),
                                 Some(Err(_)) => "Spendable balance unavailable".to_owned(),
                                 Some(Ok(_)) => match available_balance {
@@ -188,7 +189,7 @@ pub(crate) fn Send() -> Element {
                         }
                     }
 
-                    if let Some(Err(message)) = &verified_utxos_state {
+                    if let Some(Err(message)) = &spendable_funds_state {
                         p { class: "error-message send-error", role: "alert", "{message}" }
                     }
 
@@ -274,9 +275,9 @@ pub(crate) fn Send() -> Element {
                                             }
                                             send_state.set(SendState::Sending);
                                             let result = {
-                                                let mut wallet = context.unlocked_wallet.write();
-                                                match wallet.as_mut() {
-                                                    Some(wallet) => build_sign_and_persist_transaction(wallet, &plan, &recipient()),
+                                                let wallet = context.unlocked_wallet.read();
+                                                match wallet.as_ref() {
+                                                    Some(wallet) => build_and_sign_transaction(wallet, &plan, &recipient()),
                                                     None => Err("Unlock the wallet again to send the transaction.".to_owned()),
                                                 }
                                             };
@@ -352,26 +353,13 @@ fn send_state_after_status_check(
     }
 }
 
-fn build_sign_and_persist_transaction(
-    wallet: &mut UnlockedWallet,
+fn build_and_sign_transaction(
+    wallet: &UnlockedWallet,
     plan: &TransactionPlan,
     recipient: &str,
 ) -> Result<SignedTransaction, String> {
     let mut transaction = build_unsigned_transaction(plan, recipient)?;
-    if plan.change > 0 {
-        let next_change_address = wallet.next_change_address()?;
-        if plan.change_address.as_deref() != Some(next_change_address.as_str()) {
-            return Err(
-                "The wallet change address changed. Review the transaction again.".to_owned(),
-            );
-        }
-    }
-
     wallet.sign_p2qrh_transaction(&mut transaction, &plan.inputs)?;
-    // Persist change before returning any signed bytes that could be broadcast.
-    if plan.change > 0 {
-        wallet.reserve_and_persist_next_change_address()?;
-    }
 
     Ok(SignedTransaction {
         transaction_id: transaction.compute_txid().to_string(),
@@ -382,9 +370,8 @@ fn build_sign_and_persist_transaction(
 fn prepare_transaction_plan(
     recipient: &str,
     amount: &str,
-    verified_utxos_state: &Option<Result<Vec<VerifiedUtxo>, String>>,
+    spendable_funds_state: &Option<Result<SpendableFunds, String>>,
     atomic_units_per_kvbyte: Option<u64>,
-    context: &AppContext,
 ) -> Result<TransactionPlan, String> {
     p2qrh::script_pubkey_from_address(recipient, WALLET_NETWORK).map_err(|message| {
         format!(
@@ -402,24 +389,17 @@ fn prepare_transaction_plan(
     let atomic_units_per_kvbyte = atomic_units_per_kvbyte
         .ok_or_else(|| "Wait for the network fee estimate to load.".to_owned())?;
 
-    let verified_utxos = verified_utxos_state
+    let funds = spendable_funds_state
         .as_ref()
         .ok_or_else(|| "Wait for the spendable balance to finish loading.".to_owned())?
         .as_ref()
-        .map_err(Clone::clone)?
-        .clone();
-
-    let wallet = context.unlocked_wallet.read();
-    let wallet = wallet
-        .as_ref()
-        .ok_or_else(|| "Unlock the wallet again to prepare the transaction.".to_owned())?;
-    let change_address = wallet.next_change_address()?;
+        .map_err(Clone::clone)?;
 
     create_transaction_plan(
-        verified_utxos,
+        funds.verified_utxos.clone(),
         amount,
         atomic_units_per_kvbyte,
-        change_address,
+        funds.change_address.clone(),
     )
 }
 
@@ -470,12 +450,13 @@ fn fee_is_large_share_of_payment(fee: u64, payment_amount: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{fee_is_large_share_of_payment, parse_north};
+    use crate::local_wallet::{DiscoveredWalletAddresses, ReceivingAddress};
 
     fn wallet_and_plan(
         path: &std::path::Path,
     ) -> (super::UnlockedWallet, super::TransactionPlan, String) {
         let pending = crate::keys::generate_new_wallet().unwrap();
-        let mut wallet = crate::local_wallet::save_new_wallet_and_unlock(
+        let wallet = crate::local_wallet::save_new_wallet_and_unlock(
             path,
             &pending,
             pending.recovery_phrase(),
@@ -483,24 +464,33 @@ mod tests {
             "test password",
         )
         .unwrap();
-        let recipient = wallet
-            .allocate_and_persist_next_receiving_address()
-            .unwrap();
+        let scanner = wallet.address_scanner();
+        let recipient = scanner.receiving_address_at(0).unwrap();
+        let change_address = scanner.change_address_at(0).unwrap();
+        let discovered = DiscoveredWalletAddresses {
+            receiving_addresses: vec![ReceivingAddress {
+                index: 0,
+                address: recipient.clone(),
+            }],
+            change_addresses: vec![change_address.clone()],
+        };
         let script =
             crate::p2qrh::script_pubkey_from_address(&recipient, crate::config::WALLET_NETWORK)
                 .unwrap();
-        let utxos = wallet
-            .verify_utxos(vec![shared::WalletUtxo {
-                transaction_id: "ab".repeat(32),
-                output_index: 0,
-                amount: 100_000,
-                script_pubkey: bitcoin::hex::DisplayHex::as_hex(script.as_slice()).to_string(),
-                block_height: 1,
-                confirmations: 1,
-                coinbase: false,
-            }])
+        let utxos = scanner
+            .verify_utxos(
+                vec![shared::WalletUtxo {
+                    transaction_id: "ab".repeat(32),
+                    output_index: 0,
+                    amount: 100_000,
+                    script_pubkey: bitcoin::hex::DisplayHex::as_hex(script.as_slice()).to_string(),
+                    block_height: 1,
+                    confirmations: 1,
+                    coinbase: false,
+                }],
+                &discovered,
+            )
             .unwrap();
-        let change_address = wallet.next_change_address().unwrap();
         let plan = super::create_transaction_plan(utxos, 50_000, 1_001, change_address).unwrap();
         (wallet, plan, recipient)
     }
@@ -536,51 +526,16 @@ mod tests {
     }
 
     #[test]
-    fn signed_transaction_change_is_tracked_after_reopening_without_a_broadcast() {
+    fn signing_a_transaction_does_not_modify_the_wallet_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("wallet.json");
-        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
-        let change = plan.change_address.as_ref().unwrap();
-        assert!(!wallet.tracked_addresses().unwrap().contains(change));
+        let (wallet, plan, recipient) = wallet_and_plan(&path);
+        let file_before = std::fs::read(&path).unwrap();
 
-        let signed =
-            super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient).unwrap();
+        let signed = super::build_and_sign_transaction(&wallet, &plan, &recipient).unwrap();
         assert!(!signed.transaction_hex.is_empty());
-        drop(wallet);
-        let reopened = crate::local_wallet::load_and_unlock_wallet(&path, "test password").unwrap();
-        assert!(reopened.tracked_addresses().unwrap().contains(change));
-        assert_ne!(reopened.next_change_address().unwrap(), *change);
-    }
-
-    #[test]
-    fn failed_change_save_does_not_return_a_signed_transaction() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("wallet.json");
-        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
-        // A directory at the wallet path forces the atomic replacement to fail.
-        std::fs::remove_file(&path).unwrap();
-        std::fs::create_dir(&path).unwrap();
-
-        assert!(super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient).is_err());
-        assert_eq!(
-            wallet.next_change_address().unwrap(),
-            *plan.change_address.as_ref().unwrap()
-        );
-    }
-
-    #[test]
-    fn changed_change_address_requires_a_new_review() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("wallet.json");
-        let (mut wallet, plan, recipient) = wallet_and_plan(&path);
-        wallet.reserve_and_persist_next_change_address().unwrap();
-
-        let error = match super::build_sign_and_persist_transaction(&mut wallet, &plan, &recipient)
-        {
-            Ok(_) => panic!("stale plan must not be signed"),
-            Err(message) => message,
-        };
-        assert!(error.contains("Review the transaction again"));
+        assert_eq!(signed.transaction_id.len(), 64);
+        assert_eq!(std::fs::read(&path).unwrap(), file_before);
     }
 
     #[test]

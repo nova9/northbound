@@ -2,9 +2,10 @@ mod addresses;
 mod history;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
-pub use addresses::{fetch_used_addresses, fetch_utxos};
+pub(crate) use addresses::fetch_used_addresses_from_server;
+pub use addresses::fetch_utxos;
 pub use history::fetch_transaction_history;
 
 use std::time::Duration;
@@ -28,6 +29,10 @@ fn http_client() -> Result<reqwest::Client, String> {
 fn endpoint(path: &str) -> Result<String, String> {
     let base_url = crate::config::current_api_base_url()?;
     Ok(format!("{base_url}{path}"))
+}
+
+pub(crate) fn address_activity_endpoint() -> Result<String, String> {
+    endpoint("/v1/addresses/activity")
 }
 
 pub(crate) async fn check_server_compatibility(base_url: &str) -> Result<(), String> {

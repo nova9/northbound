@@ -48,6 +48,10 @@ pub struct WalletTransaction {
     pub block_height: Option<u64>,
     pub confirmations: u64,
     pub timestamp: Option<u64>,
+    /// Requested addresses that received outputs in this transaction.
+    /// Older servers omit this field.
+    #[serde(default)]
+    pub received_addresses: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

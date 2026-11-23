@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use bip39::{Mnemonic, WordCount};
-use bitcoin::bip32::{DerivationPath, Xpriv};
+use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv, Xpub};
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use zeroize::Zeroize;
 
@@ -32,6 +32,10 @@ impl PendingWallet {
 
     pub(crate) fn encrypt(&self, password: &str) -> Result<EncryptedWalletSecrets, String> {
         self.secrets.encrypt(password)
+    }
+
+    pub(crate) fn secrets(&self) -> &DecryptedWalletSecrets {
+        &self.secrets
     }
 }
 
@@ -101,6 +105,89 @@ pub fn derive_regtest_receiving_public_key_from_entropy(
         .map_err(|error| format!("invalid wallet entropy: {error}"))?;
 
     derive_receiving_public_key_from_mnemonic(&mnemonic, address_index, Network::Regtest)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AccountPublicKeys {
+    receiving: Xpub,
+    change: Xpub,
+}
+
+impl AccountPublicKeys {
+    pub(crate) fn from_entropy(entropy: &[u8; 16]) -> Result<Self, String> {
+        Self::from_entropy_for_network(entropy, WALLET_NETWORK)
+    }
+
+    fn from_entropy_for_network(entropy: &[u8; 16], network: Network) -> Result<Self, String> {
+        let mnemonic = Mnemonic::from_entropy(entropy)
+            .map_err(|error| format!("invalid wallet entropy: {error}"))?;
+        let mut seed = mnemonic.to_seed("");
+
+        let bip32_network = match network {
+            Network::Mainnet => bitcoin::Network::Bitcoin,
+            Network::Regtest => bitcoin::Network::Regtest,
+        };
+
+        let master_key_result = Xpriv::new_master(bip32_network, &seed);
+        seed.zeroize();
+
+        let master_key =
+            master_key_result.map_err(|error| format!("could not create master key: {error}"))?;
+
+        let coin_type = match network {
+            Network::Mainnet => TRUENORTH_MAINNET_COIN_TYPE,
+            Network::Regtest => TEST_CHAIN_COIN_TYPE,
+        };
+
+        let account_path = DerivationPath::from_str(&format!(
+            "m/{P2QRH_PURPOSE}'/{coin_type}'/{DEFAULT_ACCOUNT}'"
+        ))
+        .map_err(|error| format!("invalid derivation path: {error}"))?;
+
+        let secp = Secp256k1::new();
+        let account_key = master_key
+            .derive_priv(&secp, &account_path)
+            .map_err(|error| format!("could not derive wallet account key: {error}"))?;
+
+        let receiving_branch = ChildNumber::from_normal_idx(RECEIVING_BRANCH)
+            .map_err(|error| format!("invalid receiving branch index: {error}"))?;
+        let change_branch = ChildNumber::from_normal_idx(CHANGE_BRANCH)
+            .map_err(|error| format!("invalid change branch index: {error}"))?;
+
+        let receiving_key = account_key
+            .derive_priv(&secp, &[receiving_branch])
+            .map_err(|error| format!("could not derive receiving branch key: {error}"))?;
+        let change_key = account_key
+            .derive_priv(&secp, &[change_branch])
+            .map_err(|error| format!("could not derive change branch key: {error}"))?;
+
+        Ok(Self {
+            receiving: Xpub::from_priv(&secp, &receiving_key),
+            change: Xpub::from_priv(&secp, &change_key),
+        })
+    }
+
+    pub(crate) fn receiving_public_key(&self, address_index: u32) -> Result<[u8; 32], String> {
+        derive_branch_child_public_key(&self.receiving, address_index)
+    }
+
+    pub(crate) fn change_public_key(&self, address_index: u32) -> Result<[u8; 32], String> {
+        derive_branch_child_public_key(&self.change, address_index)
+    }
+}
+
+fn derive_branch_child_public_key(
+    branch_key: &Xpub,
+    address_index: u32,
+) -> Result<[u8; 32], String> {
+    let child_number = ChildNumber::from_normal_idx(address_index)
+        .map_err(|_| "wallet address index is exhausted".to_owned())?;
+    let secp = Secp256k1::verification_only();
+    let child_key = branch_key
+        .ckd_pub(&secp, child_number)
+        .map_err(|error| format!("could not derive wallet public key: {error}"))?;
+
+    Ok(child_key.to_x_only_pub().serialize())
 }
 
 pub fn derive_receiving_public_key_from_entropy(
@@ -456,5 +543,39 @@ mod tests {
             address,
             "rnorth1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzsnpx4h6",
         );
+    }
+
+    #[test]
+    fn account_public_keys_match_mnemonic_derivation_across_branches_and_networks() {
+        let entropy = [0_u8; 16];
+        let mnemonic = Mnemonic::from_entropy(&entropy)
+            .expect("standard test entropy should produce a mnemonic");
+
+        for network in [Network::Mainnet, Network::Regtest] {
+            let public_keys = super::AccountPublicKeys::from_entropy_for_network(&entropy, network)
+                .expect("account public keys should derive");
+
+            for index in [0, 1, 2, 19, 25] {
+                let expected_receiving =
+                    derive_public_key_from_mnemonic(&mnemonic, RECEIVING_BRANCH, index, network)
+                        .expect("receiving key should derive");
+                let expected_change =
+                    derive_public_key_from_mnemonic(&mnemonic, CHANGE_BRANCH, index, network)
+                        .expect("change key should derive");
+
+                assert_eq!(
+                    public_keys
+                        .receiving_public_key(index)
+                        .expect("xpub receiving key should derive"),
+                    expected_receiving
+                );
+                assert_eq!(
+                    public_keys
+                        .change_public_key(index)
+                        .expect("xpub change key should derive"),
+                    expected_change
+                );
+            }
+        }
     }
 }

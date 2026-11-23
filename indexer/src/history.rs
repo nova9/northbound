@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use shared::{TransactionHistory, WalletTransaction};
@@ -154,7 +156,8 @@ impl ReadSnapshot<'_> {
         is_coinbase: bool,
         tip_height: u64,
     ) -> Result<WalletTransaction> {
-        let (total_output, owned_output) = self.sum_transaction_outputs(txid)?;
+        let (total_output, owned_output, received_addresses) =
+            self.sum_transaction_outputs(txid)?;
         let (total_input, owned_input) = self.sum_transaction_inputs(txid)?;
 
         // Signed net balance change for the requested scripts (`owned_output - owned_input`).
@@ -185,33 +188,36 @@ impl ReadSnapshot<'_> {
             block_height,
             confirmations,
             timestamp: Some(timestamp),
+            received_addresses,
         })
     }
 
-    /// Returns `(total_output, owned_output)` across all outputs of `txid`.
-    fn sum_transaction_outputs(&self, txid: &[u8]) -> Result<(u64, u64)> {
+    /// Returns `(total_output, owned_output, received_addresses)` across all outputs of `txid`.
+    fn sum_transaction_outputs(&self, txid: &[u8]) -> Result<(u64, u64, Vec<String>)> {
         let mut statement = self.database.prepare(
-            "SELECT o.amount,
-                    EXISTS (SELECT 1 FROM requested_scripts r WHERE r.script = o.script)
+            "SELECT o.amount, r.address
              FROM all_outputs o
+             LEFT JOIN requested_scripts r ON r.script = o.script
              WHERE o.txid = ?1",
         )?;
 
         let mut total = 0_u64;
         let mut owned_total = 0_u64;
+        let mut received_addresses = BTreeSet::new();
         let rows = statement.query_map([txid], |row| {
-            Ok((read_u64(row, 0)?, row.get::<_, bool>(1)?))
+            Ok((read_u64(row, 0)?, row.get::<_, Option<String>>(1)?))
         })?;
 
         for row in rows {
-            let (amount, is_owned) = row?;
+            let (amount, owned_address) = row?;
             total = add_amount(total, amount)?;
-            if is_owned {
+            if let Some(address) = owned_address {
                 owned_total = add_amount(owned_total, amount)?;
+                received_addresses.insert(address);
             }
         }
 
-        Ok((total, owned_total))
+        Ok((total, owned_total, received_addresses.into_iter().collect()))
     }
 
     /// Returns `(total_input, owned_input)` across all inputs spent by `txid`.
@@ -357,13 +363,17 @@ mod tests {
                 );
             }
             assert_eq!(summaries[0].net_amount, 300_000_000);
+            assert_eq!(summaries[0].received_addresses, vec!["C"]);
             assert_eq!(summaries[1].net_amount, -800_000_000);
+            assert!(summaries[1].received_addresses.is_empty());
             assert_eq!(summaries[2].net_amount, -500_000_000);
+            assert_eq!(summaries[2].received_addresses, vec!["C"]);
             assert_eq!(
                 summaries[0].net_amount + summaries[1].net_amount,
                 summaries[2].net_amount
             );
             assert_eq!(summaries[3].net_amount, 490_000_000);
+            assert_eq!(summaries[3].received_addresses, vec!["recipient"]);
             for summary in summaries {
                 assert_eq!(summary.network_fee, Some(10_000_000));
                 assert_eq!(summary.confirmations, if pending { 0 } else { 1 });
@@ -406,5 +416,6 @@ mod tests {
         assert_eq!(coinbase.net_amount, 51_200_000_000);
         assert_eq!(coinbase.network_fee, None);
         assert!(coinbase.coinbase);
+        assert_eq!(coinbase.received_addresses, vec!["wallet"]);
     }
 }
