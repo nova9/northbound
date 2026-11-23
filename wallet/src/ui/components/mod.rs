@@ -5,6 +5,7 @@ mod header;
 mod logo;
 mod modal_dialog;
 mod recovery_words;
+mod remove_wallet_dialog;
 mod sidebar;
 mod transaction_history;
 
@@ -15,5 +16,6 @@ pub(crate) use header::Header;
 pub(crate) use logo::Logo;
 pub(crate) use modal_dialog::ModalDialog;
 pub(crate) use recovery_words::RecoveryWords;
+pub(crate) use remove_wallet_dialog::RemoveWalletDialog;
 pub(crate) use sidebar::Sidebar;
 pub(crate) use transaction_history::TransactionHistoryView;

@@ -1,12 +1,33 @@
+use bitcoin::consensus::encode;
 use bitcoin::secp256k1::{Keypair, Message, Secp256k1};
 use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
 use bitcoin::{Transaction, TxOut, Witness};
 
-use crate::keys;
-use crate::local_wallet::{VerifiedUtxo, WalletKeychain};
-use crate::p2qrh;
+use crate::crypto::{keys, p2qrh};
+use crate::transactions::build::build_unsigned_transaction;
+use crate::transactions::plan::TransactionPlan;
+use crate::transactions::utxo::{VerifiedUtxo, WalletKeychain};
 
 const SCHNORR_SCHEME_ID: u8 = 0x01;
+
+pub struct SignedTransaction {
+    pub transaction_hex: String,
+    pub transaction_id: String,
+}
+
+pub fn build_and_sign_p2qrh_transaction(
+    plan: &TransactionPlan,
+    recipient_address: &str,
+    wallet_entropy: &[u8; 16],
+) -> Result<SignedTransaction, String> {
+    let mut transaction = build_unsigned_transaction(plan, recipient_address)?;
+    sign_p2qrh_transaction(&mut transaction, &plan.inputs, wallet_entropy)?;
+
+    Ok(SignedTransaction {
+        transaction_id: transaction.compute_txid().to_string(),
+        transaction_hex: encode::serialize_hex(&transaction),
+    })
+}
 
 pub fn sign_p2qrh_transaction(
     transaction: &mut Transaction,
@@ -92,11 +113,10 @@ mod tests {
 
     use super::sign_p2qrh_transaction;
     use crate::config::WALLET_NETWORK;
-    use crate::keys;
-    use crate::local_wallet::{VerifiedUtxo, WalletKeychain};
-    use crate::p2qrh;
-    use crate::transaction_plan::{TransactionPlan, create_transaction_plan};
-    use crate::unsigned_transaction::build_unsigned_transaction;
+    use crate::crypto::{keys, p2qrh};
+    use crate::transactions::build::build_unsigned_transaction;
+    use crate::transactions::plan::{TransactionPlan, create_transaction_plan};
+    use crate::transactions::utxo::{VerifiedUtxo, WalletKeychain};
 
     #[test]
     fn p2qrh_witness_contains_a_valid_signature_public_key_and_scheme() {
@@ -115,7 +135,7 @@ mod tests {
             )
             .expect("test transaction should have a sighash");
 
-        sign_p2qrh_transaction(&mut transaction, &[input.clone()], &entropy)
+        sign_p2qrh_transaction(&mut transaction, std::slice::from_ref(&input), &entropy)
             .expect("wallet should sign its input");
 
         let witness_items = transaction.input[0].witness.iter().collect::<Vec<_>>();
@@ -223,21 +243,37 @@ mod tests {
     #[test]
     fn signature_commits_to_the_recipient_amount_fee_and_previous_output() {
         let (entropy, mut transaction, input) = unsigned_receiving_spend();
-        sign_p2qrh_transaction(&mut transaction, &[input.clone()], &entropy)
+        sign_p2qrh_transaction(&mut transaction, std::slice::from_ref(&input), &entropy)
             .expect("wallet should sign its input");
-        assert!(signature_verifies(&transaction, &[input.clone()], 0));
+        assert!(signature_verifies(
+            &transaction,
+            std::slice::from_ref(&input),
+            0
+        ));
 
         let mut changed_recipient = transaction.clone();
         changed_recipient.output[0].script_pubkey = transaction.output[1].script_pubkey.clone();
-        assert!(!signature_verifies(&changed_recipient, &[input.clone()], 0));
+        assert!(!signature_verifies(
+            &changed_recipient,
+            std::slice::from_ref(&input),
+            0
+        ));
 
         let mut changed_amount = transaction.clone();
         changed_amount.output[0].value = Amount::from_sat(100_000_001);
-        assert!(!signature_verifies(&changed_amount, &[input.clone()], 0));
+        assert!(!signature_verifies(
+            &changed_amount,
+            std::slice::from_ref(&input),
+            0
+        ));
 
         let mut changed_fee = transaction.clone();
         changed_fee.output[1].value = Amount::from_sat(899_998_359);
-        assert!(!signature_verifies(&changed_fee, &[input.clone()], 0));
+        assert!(!signature_verifies(
+            &changed_fee,
+            std::slice::from_ref(&input),
+            0
+        ));
 
         let mut changed_input_amount = input.clone();
         changed_input_amount.amount = Amount::from_sat(1_000_000_001);

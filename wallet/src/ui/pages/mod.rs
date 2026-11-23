@@ -4,7 +4,6 @@ mod history;
 mod home;
 mod new_wallet;
 mod receive;
-mod remove_wallet;
 mod restore;
 mod send;
 mod settings;

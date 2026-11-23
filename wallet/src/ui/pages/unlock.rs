@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
 
-use crate::local_wallet::load_and_unlock_wallet;
 use crate::ui::components::{ErrorMessage, Field};
 use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
 use crate::ui::state::AppContext;
+use crate::wallet::load_and_unlock_wallet;
 
 #[component]
 pub(crate) fn Unlock() -> Element {

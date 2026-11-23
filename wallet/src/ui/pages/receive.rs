@@ -1,16 +1,9 @@
 use dioxus::prelude::*;
 
 use crate::config::CURRENCY_TICKER;
+use crate::server::ServerClient;
+use crate::ui::clipboard::copy_text;
 use crate::ui::state::AppContext;
-
-fn copy_address_to_clipboard(address: &str) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|error| format!("Could not access the clipboard: {error}"))?;
-
-    clipboard
-        .set_text(address)
-        .map_err(|error| format!("Could not copy the address: {error}"))
-}
 
 #[component]
 pub(crate) fn Receive() -> Element {
@@ -41,7 +34,8 @@ pub(crate) fn Receive() -> Element {
 
         async move {
             let scanner = address_scanner?;
-            let addresses = scanner.discover_receiving_addresses().await?;
+            let server = ServerClient::from_configured_server()?;
+            let addresses = scanner.discover_receiving_addresses(&server).await?;
             if let (Some(wallet_path), Some(current)) = (wallet_path.as_deref(), addresses.last()) {
                 context.note_active_receiving_index(wallet_path, current.index);
             }
@@ -119,7 +113,7 @@ pub(crate) fn Receive() -> Element {
                                     class: "button primary compact-button",
                                     r#type: "button",
                                     onclick: move |_| {
-                                        match copy_address_to_clipboard(&current_to_copy) {
+                                        match copy_text(&current_to_copy, "the address") {
                                             Ok(()) => {
                                                 copied_address_index.set(Some(current_index));
                                                 clipboard_error.set(None);
@@ -174,7 +168,7 @@ pub(crate) fn Receive() -> Element {
                                                         class: "copy-link",
                                                         r#type: "button",
                                                         onclick: move |_| {
-                                                            match copy_address_to_clipboard(&address_to_copy) {
+                                                            match copy_text(&address_to_copy, "the address") {
                                                                 Ok(()) => {
                                                                     copied_address_index.set(Some(address_index));
                                                                     clipboard_error.set(None);

@@ -3,136 +3,130 @@ use std::collections::{HashMap, HashSet};
 use shared::{IndexStatus, TransactionHistory, TransactionHistoryRequest, WalletTransaction};
 
 use crate::config::MAX_ADDRESSES_PER_REQUEST;
-
-use super::addresses::unique_addresses;
-use super::{endpoint, http_client, require_current_index, require_success};
+use crate::server::addresses::unique_addresses;
+use crate::server::client::{ServerClient, require_current_index, require_success};
 
 const HISTORY_PAGE_SIZE: u16 = 100;
 const MAX_HISTORY_CURSOR_LENGTH: usize = 1_024;
 
-pub async fn fetch_transaction_history(
-    addresses: Vec<String>,
-) -> Result<Vec<WalletTransaction>, String> {
-    if addresses.is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = endpoint("/v1/transactions")?;
-    fetch_transaction_history_from_server(addresses, &url).await
-}
-
-async fn fetch_transaction_history_from_server(
-    addresses: Vec<String>,
-    url: &str,
-) -> Result<Vec<WalletTransaction>, String> {
-    let addresses = unique_addresses(addresses);
-    let client = http_client()?;
-    // Retry the whole load once, including completed address batches, if the
-    // chain or pending snapshot changes. Never return a partial history.
-    'attempt: for _ in 0..2 {
-        let mut transactions = HashMap::new();
-        let mut snapshot: Option<IndexStatus> = None;
-        for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
-            let requested_in_batch = batch.iter().map(String::as_str).collect::<HashSet<_>>();
-            let mut cursor = None;
-            let mut seen_cursors = HashSet::new();
-            let mut seen_transactions = HashSet::new();
-            let mut previous_position: Option<(u64, String)> = None;
-            loop {
-                let request = TransactionHistoryRequest {
-                    addresses: batch.to_vec(),
-                    cursor,
-                    limit: Some(HISTORY_PAGE_SIZE),
-                };
-                let response = client
-                    .post(url)
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|error| format!("could not contact wallet server: {error}"))?;
-                if response.status() == reqwest::StatusCode::CONFLICT {
-                    continue 'attempt;
-                }
-                let response =
-                    require_success(response, "Could not load transaction history").await?;
-                let page: TransactionHistory = response
-                    .json()
-                    .await
-                    .map_err(|error| format!("wallet server returned invalid history: {error}"))?;
-                require_current_index(&page.index)?;
-                if page.index.pending_revision.is_none() {
-                    return Err(
-                        "The wallet server returned history without a snapshot revision.".into(),
-                    );
-                }
-                if let Some(first) = &snapshot {
-                    if first.indexed_height != page.index.indexed_height
-                        || first.indexed_hash != page.index.indexed_hash
-                        || first.pending_revision != page.index.pending_revision
-                    {
+impl ServerClient {
+    pub(crate) async fn fetch_transaction_history(
+        &self,
+        addresses: Vec<String>,
+    ) -> Result<Vec<WalletTransaction>, String> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addresses = unique_addresses(addresses);
+        let url = self.endpoint("/v1/transactions");
+        // Retry the whole load once, including completed address batches, if the
+        // chain or pending snapshot changes. Never return a partial history.
+        'attempt: for _ in 0..2 {
+            let mut transactions = HashMap::new();
+            let mut snapshot: Option<IndexStatus> = None;
+            for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
+                let requested_in_batch = batch.iter().map(String::as_str).collect::<HashSet<_>>();
+                let mut cursor = None;
+                let mut seen_cursors = HashSet::new();
+                let mut seen_transactions = HashSet::new();
+                let mut previous_position: Option<(u64, String)> = None;
+                loop {
+                    let request = TransactionHistoryRequest {
+                        addresses: batch.to_vec(),
+                        cursor,
+                        limit: Some(HISTORY_PAGE_SIZE),
+                    };
+                    let response = self
+                        .http()
+                        .post(&url)
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(|error| format!("could not contact wallet server: {error}"))?;
+                    if response.status() == reqwest::StatusCode::CONFLICT {
                         continue 'attempt;
                     }
-                } else {
-                    snapshot = Some(page.index);
-                }
-                if page.transactions.len() > usize::from(HISTORY_PAGE_SIZE)
-                    || page
-                        .next_cursor
-                        .as_ref()
-                        .is_some_and(|cursor| cursor.len() > MAX_HISTORY_CURSOR_LENGTH)
-                    || (page.transactions.is_empty() && page.next_cursor.is_some())
-                {
-                    return Err("The wallet server returned an invalid history page.".into());
-                }
-                for mut transaction in page.transactions {
-                    // Repetition across address batches is expected. Within a
-                    // batch's pages it would count the same contribution twice.
-                    if !seen_transactions.insert(transaction.transaction_id.clone()) {
+                    let response =
+                        require_success(response, "Could not load transaction history").await?;
+                    let page: TransactionHistory = response.json().await.map_err(|error| {
+                        format!("wallet server returned invalid history: {error}")
+                    })?;
+                    require_current_index(&page.index)?;
+                    if page.index.pending_revision.is_none() {
                         return Err(
-                            "The wallet server repeated a transaction within a history batch."
+                            "The wallet server returned history without a snapshot revision."
                                 .into(),
                         );
                     }
-                    for address in &transaction.received_addresses {
-                        if !requested_in_batch.contains(address.as_str()) {
+                    if let Some(first) = &snapshot {
+                        if first.indexed_height != page.index.indexed_height
+                            || first.indexed_hash != page.index.indexed_hash
+                            || first.pending_revision != page.index.pending_revision
+                        {
+                            continue 'attempt;
+                        }
+                    } else {
+                        snapshot = Some(page.index);
+                    }
+                    if page.transactions.len() > usize::from(HISTORY_PAGE_SIZE)
+                        || page
+                            .next_cursor
+                            .as_ref()
+                            .is_some_and(|cursor| cursor.len() > MAX_HISTORY_CURSOR_LENGTH)
+                        || (page.transactions.is_empty() && page.next_cursor.is_some())
+                    {
+                        return Err("The wallet server returned an invalid history page.".into());
+                    }
+                    for mut transaction in page.transactions {
+                        // Repetition across address batches is expected. Within a
+                        // batch's pages it would count the same contribution twice.
+                        if !seen_transactions.insert(transaction.transaction_id.clone()) {
                             return Err(
-                                "The wallet server returned an unrequested address in transaction history."
+                                "The wallet server repeated a transaction within a history batch."
                                     .into(),
                             );
                         }
-                    }
-                    normalize_addresses(&mut transaction.received_addresses);
-                    let height = transaction.block_height.unwrap_or(u64::MAX);
-                    if let Some((previous_height, previous_id)) = &previous_position {
-                        if height > *previous_height
-                            || (height == *previous_height
-                                && transaction.transaction_id <= *previous_id)
+                        for address in &transaction.received_addresses {
+                            if !requested_in_batch.contains(address.as_str()) {
+                                return Err(
+                                    "The wallet server returned an unrequested address in transaction history."
+                                        .into(),
+                                );
+                            }
+                        }
+                        normalize_addresses(&mut transaction.received_addresses);
+                        let height = transaction.block_height.unwrap_or(u64::MAX);
+                        if let Some((previous_height, previous_id)) = &previous_position
+                            && (height > *previous_height
+                                || (height == *previous_height
+                                    && transaction.transaction_id <= *previous_id))
                         {
                             return Err("The wallet server returned history out of order.".into());
                         }
+                        previous_position = Some((height, transaction.transaction_id.clone()));
+                        merge_transaction(&mut transactions, transaction)?;
                     }
-                    previous_position = Some((height, transaction.transaction_id.clone()));
-                    merge_transaction(&mut transactions, transaction)?;
-                }
-                cursor = page.next_cursor;
-                let Some(next_cursor) = &cursor else {
-                    break;
-                };
-                if !seen_cursors.insert(next_cursor.clone()) {
-                    return Err("The wallet server repeated a history cursor.".into());
+                    cursor = page.next_cursor;
+                    let Some(next_cursor) = &cursor else {
+                        break;
+                    };
+                    if !seen_cursors.insert(next_cursor.clone()) {
+                        return Err("The wallet server repeated a history cursor.".into());
+                    }
                 }
             }
+            let mut transactions: Vec<_> = transactions.into_values().collect();
+            transactions.sort_by(|left, right| {
+                right
+                    .block_height
+                    .unwrap_or(u64::MAX)
+                    .cmp(&left.block_height.unwrap_or(u64::MAX))
+                    .then_with(|| left.transaction_id.cmp(&right.transaction_id))
+            });
+            return Ok(transactions);
         }
-        let mut transactions: Vec<_> = transactions.into_values().collect();
-        transactions.sort_by(|left, right| {
-            right
-                .block_height
-                .unwrap_or(u64::MAX)
-                .cmp(&left.block_height.unwrap_or(u64::MAX))
-                .then_with(|| left.transaction_id.cmp(&right.transaction_id))
-        });
-        return Ok(transactions);
+        Err("Transaction history changed while loading. Please refresh.".into())
     }
-    Err("Transaction history changed while loading. Please refresh.".into())
 }
 
 fn merge_transaction(
@@ -171,10 +165,13 @@ fn normalize_addresses(addresses: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use std::collections::HashMap;
 
-    use super::*;
-    use crate::api::test_support::{addresses, index, serve};
+    use serde_json::{Value, json};
+    use shared::WalletTransaction;
+
+    use super::{MAX_HISTORY_CURSOR_LENGTH, ServerClient, merge_transaction};
+    use crate::server::test_support::{addresses, index, serve};
 
     fn transaction(number: usize, net_amount: i64) -> Value {
         json!({
@@ -226,11 +223,12 @@ mod tests {
     }
 
     fn fetch(addresses: Vec<String>, url: &str) -> Result<Vec<WalletTransaction>, String> {
+        let client = ServerClient::new(url).unwrap();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
-            .block_on(fetch_transaction_history_from_server(addresses, url))
+            .block_on(client.fetch_transaction_history(addresses))
     }
 
     #[test]
@@ -454,13 +452,15 @@ mod tests {
         let (url, server) = serve(2, |_, _| (409, json!({"message": "Changed"})));
         assert!(fetch(addresses(101), &url).unwrap_err().contains("changed"));
         server.join().unwrap();
+        let client = ServerClient::new("http://127.0.0.1:1").unwrap();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
                 assert!(
-                    fetch_transaction_history(Vec::new())
+                    client
+                        .fetch_transaction_history(Vec::new())
                         .await
                         .unwrap()
                         .is_empty()

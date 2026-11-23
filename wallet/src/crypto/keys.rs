@@ -5,9 +5,7 @@ use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv, Xpub};
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use zeroize::Zeroize;
 
-use crate::config::WALLET_NETWORK;
-use crate::p2qrh::Network;
-use crate::wallet_secrets::{DecryptedWalletSecrets, EncryptedWalletSecrets};
+use crate::config::{Network, WALLET_NETWORK};
 
 const P2QRH_PURPOSE: u32 = 88;
 const TRUENORTH_MAINNET_COIN_TYPE: u32 = 1867;
@@ -16,27 +14,19 @@ const DEFAULT_ACCOUNT: u32 = 0;
 const RECEIVING_BRANCH: u32 = 0;
 const CHANGE_BRANCH: u32 = 1;
 
-pub struct PendingWallet {
-    recovery_phrase: String,
-    secrets: DecryptedWalletSecrets,
+pub(crate) fn generate_recovery_phrase_and_entropy() -> Result<(String, [u8; 16]), String> {
+    let mnemonic = Mnemonic::generate(WordCount::Words12)
+        .map_err(|error| format!("could not generate recovery phrase: {error}"))?;
+
+    mnemonic_to_phrase_and_entropy(mnemonic)
 }
 
-impl PendingWallet {
-    pub fn recovery_phrase(&self) -> &str {
-        &self.recovery_phrase
-    }
+pub(crate) fn parse_recovery_phrase_and_entropy(
+    recovery_phrase: &str,
+) -> Result<(String, [u8; 16]), String> {
+    let mnemonic = parse_recovery_phrase(recovery_phrase)?;
 
-    pub fn confirms_recovery_phrase(&self, entered_phrase: &str) -> Result<bool, String> {
-        recovery_phrase_matches_entropy(entered_phrase, self.secrets.bip39_entropy())
-    }
-
-    pub(crate) fn encrypt(&self, password: &str) -> Result<EncryptedWalletSecrets, String> {
-        self.secrets.encrypt(password)
-    }
-
-    pub(crate) fn secrets(&self) -> &DecryptedWalletSecrets {
-        &self.secrets
-    }
+    mnemonic_to_phrase_and_entropy(mnemonic)
 }
 
 pub(crate) fn recovery_phrase_matches_entropy(
@@ -55,25 +45,6 @@ pub(crate) fn recovery_phrase_matches_entropy(
     Ok(matches)
 }
 
-impl Drop for PendingWallet {
-    fn drop(&mut self) {
-        self.recovery_phrase.zeroize();
-    }
-}
-
-pub fn generate_new_wallet() -> Result<PendingWallet, String> {
-    let mnemonic = Mnemonic::generate(WordCount::Words12)
-        .map_err(|error| format!("could not generate recovery phrase: {error}"))?;
-
-    wallet_from_mnemonic(mnemonic)
-}
-
-pub fn restore_wallet(recovery_phrase: &str) -> Result<PendingWallet, String> {
-    let mnemonic = parse_recovery_phrase(recovery_phrase)?;
-
-    wallet_from_mnemonic(mnemonic)
-}
-
 fn parse_recovery_phrase(recovery_phrase: &str) -> Result<Mnemonic, String> {
     let mnemonic = Mnemonic::parse(recovery_phrase)
         .map_err(|error| format!("invalid recovery phrase: {error}"))?;
@@ -85,26 +56,13 @@ fn parse_recovery_phrase(recovery_phrase: &str) -> Result<Mnemonic, String> {
     Ok(mnemonic)
 }
 
-#[cfg(test)]
-pub fn derive_regtest_receiving_public_key(
-    recovery_phrase: &str,
-    address_index: u32,
-) -> Result<[u8; 32], String> {
-    let mnemonic = Mnemonic::parse(recovery_phrase)
-        .map_err(|error| format!("invalid recovery phrase: {error}"))?;
+fn mnemonic_to_phrase_and_entropy(mnemonic: Mnemonic) -> Result<(String, [u8; 16]), String> {
+    let entropy: [u8; 16] = mnemonic
+        .to_entropy()
+        .try_into()
+        .map_err(|_| "recovery phrase did not contain 16 bytes of entropy".to_owned())?;
 
-    derive_receiving_public_key_from_mnemonic(&mnemonic, address_index, Network::Regtest)
-}
-
-#[cfg(test)]
-pub fn derive_regtest_receiving_public_key_from_entropy(
-    entropy: &[u8; 16],
-    address_index: u32,
-) -> Result<[u8; 32], String> {
-    let mnemonic = Mnemonic::from_entropy(entropy)
-        .map_err(|error| format!("invalid wallet entropy: {error}"))?;
-
-    derive_receiving_public_key_from_mnemonic(&mnemonic, address_index, Network::Regtest)
+    Ok((mnemonic.to_string(), entropy))
 }
 
 #[derive(Clone, Debug)]
@@ -231,12 +189,25 @@ pub(crate) fn derive_change_private_key_from_entropy(
 }
 
 #[cfg(test)]
-fn derive_receiving_public_key_from_mnemonic(
-    mnemonic: &Mnemonic,
+pub(crate) fn derive_regtest_receiving_public_key(
+    recovery_phrase: &str,
     address_index: u32,
-    network: Network,
 ) -> Result<[u8; 32], String> {
-    derive_public_key_from_mnemonic(mnemonic, RECEIVING_BRANCH, address_index, network)
+    let mnemonic = Mnemonic::parse(recovery_phrase)
+        .map_err(|error| format!("invalid recovery phrase: {error}"))?;
+
+    derive_public_key_from_mnemonic(&mnemonic, RECEIVING_BRANCH, address_index, Network::Regtest)
+}
+
+#[cfg(test)]
+fn derive_regtest_receiving_public_key_from_entropy(
+    entropy: &[u8; 16],
+    address_index: u32,
+) -> Result<[u8; 32], String> {
+    let mnemonic = Mnemonic::from_entropy(entropy)
+        .map_err(|error| format!("invalid wallet entropy: {error}"))?;
+
+    derive_public_key_from_mnemonic(&mnemonic, RECEIVING_BRANCH, address_index, Network::Regtest)
 }
 
 fn derive_public_key_from_mnemonic(
@@ -290,32 +261,17 @@ fn derive_private_key_from_mnemonic(
     Ok(derived_key.private_key)
 }
 
-fn wallet_from_mnemonic(mnemonic: Mnemonic) -> Result<PendingWallet, String> {
-    let entropy: [u8; 16] = mnemonic
-        .to_entropy()
-        .try_into()
-        .map_err(|_| "recovery phrase did not contain 16 bytes of entropy".to_owned())?;
-
-    let recovery_phrase = mnemonic.to_string();
-    let secrets = DecryptedWalletSecrets::new(entropy);
-
-    Ok(PendingWallet {
-        recovery_phrase,
-        secrets,
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::p2qrh::{Network, address_from_public_key, script_pubkey_from_public_key};
     use bip39::Mnemonic;
 
     use super::{
-        CHANGE_BRANCH, RECEIVING_BRANCH, derive_change_public_key_from_entropy,
+        AccountPublicKeys, CHANGE_BRANCH, RECEIVING_BRANCH, derive_change_public_key_from_entropy,
         derive_public_key_from_mnemonic, derive_receiving_public_key_from_entropy,
         derive_regtest_receiving_public_key, derive_regtest_receiving_public_key_from_entropy,
-        generate_new_wallet, restore_wallet,
     };
+    use crate::config::Network;
+    use crate::crypto::p2qrh::{address_from_public_key, script_pubkey_from_public_key};
 
     #[test]
     fn standard_mnemonic_produces_expected_seed() {
@@ -462,49 +418,6 @@ mod tests {
     }
 
     #[test]
-    fn new_wallet_has_a_valid_twelve_word_recovery_phrase() {
-        let wallet = generate_new_wallet().expect("new wallet should be generated");
-
-        let mnemonic = Mnemonic::parse(wallet.recovery_phrase())
-            .expect("generated phrase should be valid BIP39");
-
-        assert_eq!(mnemonic.word_count(), 12);
-    }
-
-    #[test]
-    fn generated_recovery_phrase_can_be_confirmed() {
-        let wallet = generate_new_wallet().expect("new wallet should be generated");
-
-        let result = wallet
-            .confirms_recovery_phrase(wallet.recovery_phrase())
-            .expect("generated recovery phrase should be valid");
-
-        assert!(result);
-    }
-
-    #[test]
-    fn a_different_recovery_phrase_is_not_confirmed() {
-        let wallet = generate_new_wallet().expect("new wallet should be generated");
-
-        let other_wallet = generate_new_wallet().expect("second wallet should be generated");
-
-        let result = wallet
-            .confirms_recovery_phrase(other_wallet.recovery_phrase())
-            .expect("second recovery phrase should be valid");
-
-        assert!(!result);
-    }
-
-    #[test]
-    fn an_invalid_recovery_phrase_is_rejected() {
-        let wallet = generate_new_wallet().expect("new wallet should be generated");
-
-        let result = wallet.confirms_recovery_phrase("this is not a valid recovery phrase");
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn entropy_derives_the_same_first_receiving_key() {
         let public_key = derive_regtest_receiving_public_key_from_entropy(&[0; 16], 0)
             .expect("standard test entropy should derive a key");
@@ -526,33 +439,13 @@ mod tests {
     }
 
     #[test]
-    fn restored_phrase_produces_the_expected_first_address() {
-        let recovery_phrase = "abandon abandon abandon abandon abandon abandon \
-         abandon abandon abandon abandon abandon about";
-
-        let restored =
-            restore_wallet(recovery_phrase).expect("standard recovery phrase should restore");
-
-        let public_key = derive_regtest_receiving_public_key(restored.recovery_phrase(), 0)
-            .expect("restored wallet should derive a key");
-
-        let address = address_from_public_key(&public_key, Network::Regtest)
-            .expect("restored key should produce an address");
-
-        assert_eq!(
-            address,
-            "rnorth1zfgvaxg6parqfv2drvsk9zadefh40zg97ese44hjkjzkjamkftpzsnpx4h6",
-        );
-    }
-
-    #[test]
     fn account_public_keys_match_mnemonic_derivation_across_branches_and_networks() {
         let entropy = [0_u8; 16];
         let mnemonic = Mnemonic::from_entropy(&entropy)
             .expect("standard test entropy should produce a mnemonic");
 
         for network in [Network::Mainnet, Network::Regtest] {
-            let public_keys = super::AccountPublicKeys::from_entropy_for_network(&entropy, network)
+            let public_keys = AccountPublicKeys::from_entropy_for_network(&entropy, network)
                 .expect("account public keys should derive");
 
             for index in [0, 1, 2, 19, 25] {

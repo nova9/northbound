@@ -2,8 +2,8 @@ use dioxus::prelude::{Signal, WritableExt};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
-use crate::local_wallet::UnlockedWallet;
-use crate::wallet_catalog::WalletFile;
+use crate::storage::catalog::WalletFile;
+use crate::wallet::UnlockedWallet;
 
 #[derive(Clone, Copy)]
 pub(crate) struct AppContext {

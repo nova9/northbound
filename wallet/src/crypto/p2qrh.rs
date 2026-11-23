@@ -1,37 +1,11 @@
 use bech32::{Fe32, Hrp, segwit};
 use sha2::{Digest, Sha256};
 
+use crate::config::Network;
+
 const DOMAIN_TAG: &[u8] = b"TrueNorth/QRH/v1";
 const SCHNORR_SCHEME_ID: u8 = 0x01;
 const EMPTY_SCRIPT_ROOT: [u8; 32] = [0; 32];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Network {
-    #[cfg_attr(feature = "regtest", allow(dead_code))]
-    Mainnet,
-    #[cfg_attr(feature = "mainnet", allow(dead_code))]
-    Regtest,
-}
-
-impl Network {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Mainnet => "mainnet",
-            Self::Regtest => "regtest",
-        }
-    }
-
-    pub const fn is_test_network(self) -> bool {
-        !matches!(self, Self::Mainnet)
-    }
-
-    fn address_prefix(self) -> &'static str {
-        match self {
-            Self::Mainnet => "north",
-            Self::Regtest => "rnorth",
-        }
-    }
-}
 
 pub fn address_from_public_key(public_key: &[u8; 32], network: Network) -> Result<String, String> {
     let commitment = commitment_from_public_key(public_key);
@@ -99,9 +73,10 @@ mod tests {
     use bitcoin::secp256k1::{Secp256k1, SecretKey};
 
     use super::{
-        EMPTY_SCRIPT_ROOT, Network, address_from_public_key, calculate_commitment,
+        EMPTY_SCRIPT_ROOT, address_from_public_key, calculate_commitment,
         commitment_from_public_key, script_pubkey_from_address, script_pubkey_from_public_key,
     };
+    use crate::config::Network;
 
     #[test]
     fn commitment_is_deterministic() {

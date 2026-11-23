@@ -1,4 +1,4 @@
-use crate::local_wallet::VerifiedUtxo;
+use super::utxo::VerifiedUtxo;
 
 const P2QRH_DUST_LIMIT: u64 = 330;
 const P2QRH_ONE_INPUT_ONE_OUTPUT_VBYTES: u64 = 121;
@@ -93,6 +93,10 @@ pub fn create_transaction_plan(
     Err("insufficient confirmed funds for the payment and fee".to_owned())
 }
 
+pub fn fee_is_large_share_of_payment(fee: u64, payment_amount: u64) -> bool {
+    fee >= payment_amount.div_ceil(10)
+}
+
 fn estimated_fee(
     input_count: usize,
     include_change: bool,
@@ -126,8 +130,8 @@ mod tests {
 
     use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 
-    use super::create_transaction_plan;
-    use crate::local_wallet::{VerifiedUtxo, WalletKeychain};
+    use super::{create_transaction_plan, fee_is_large_share_of_payment};
+    use crate::transactions::utxo::{VerifiedUtxo, WalletKeychain};
 
     fn confirmed_utxo(amount: u64, output_index: u32) -> VerifiedUtxo {
         VerifiedUtxo {
@@ -227,5 +231,12 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn fee_warning_starts_at_ten_percent_of_the_payment() {
+        assert!(!fee_is_large_share_of_payment(9_999, 100_000));
+        assert!(fee_is_large_share_of_payment(10_000, 100_000));
+        assert!(!fee_is_large_share_of_payment(10_000, 100_001));
     }
 }

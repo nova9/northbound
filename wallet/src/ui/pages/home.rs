@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 
-use crate::config::CURRENCY_TICKER;
-use crate::local_wallet::{ReceivingAddress, calculate_spendable_balance};
+use crate::amount::{calculate_total_balance, format_north};
+use crate::config::{CURRENCY_TICKER, wallet_directory};
+use crate::server::{ReceivingAddress, ServerClient};
+use crate::storage::catalog;
+use crate::transactions::calculate_spendable_balance;
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
-
-const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
 
 struct OverviewData {
     current_address: ReceivingAddress,
@@ -27,9 +28,7 @@ pub(crate) fn Home() -> Element {
         let destination = if context.selected_wallet.read().is_some() {
             Route::Unlock
         } else {
-            match crate::config::wallet_directory()
-                .and_then(|directory| crate::wallet_catalog::read_wallet_files(&directory))
-            {
+            match wallet_directory().and_then(|directory| catalog::read_wallet_files(&directory)) {
                 Ok(wallets) if wallets.is_empty() => Route::Welcome,
                 _ => Route::Wallets,
             }
@@ -58,19 +57,22 @@ pub(crate) fn Home() -> Element {
         let wallet_path = wallet_path.clone();
 
         async move {
-            let discovered = scanner.discover_addresses().await?;
+            let server = ServerClient::from_configured_server()?;
+            let discovered = scanner.discover_addresses(&server).await?;
             let current_address = discovered.active_receiving_address()?.clone();
             if let Some(wallet_path) = wallet_path.as_deref() {
                 context.note_active_receiving_index(wallet_path, current_address.index);
             }
             let tracked_addresses = discovered.tracked_addresses();
 
-            let total_balance =
-                match crate::api::fetch_transaction_history(tracked_addresses.clone()).await {
-                    Ok(transactions) => calculate_total_balance(&transactions),
-                    Err(message) => Err(message),
-                };
-            let spendable_balance = match crate::api::fetch_utxos(tracked_addresses).await {
+            let total_balance = match server
+                .fetch_transaction_history(tracked_addresses.clone())
+                .await
+            {
+                Ok(transactions) => calculate_total_balance(&transactions),
+                Err(message) => Err(message),
+            };
+            let spendable_balance = match server.fetch_utxos(tracked_addresses).await {
                 Ok(utxos) => scanner
                     .verify_utxos(utxos, &discovered)
                     .and_then(|utxos| calculate_spendable_balance(&utxos)),
@@ -212,58 +214,5 @@ pub(crate) fn Home() -> Element {
                 }
             }
         }
-    }
-}
-
-fn format_north(amount: u64) -> String {
-    let whole_units = amount / ATOMIC_UNITS_PER_NORTH;
-    let fractional_units = amount % ATOMIC_UNITS_PER_NORTH;
-
-    format!("{whole_units}.{fractional_units:08}")
-}
-
-fn calculate_total_balance(transactions: &[shared::WalletTransaction]) -> Result<u64, String> {
-    let mut total = 0_i128;
-    for transaction in transactions {
-        total = total
-            .checked_add(i128::from(transaction.net_amount))
-            .ok_or_else(|| "Transaction history balance is too large.".to_owned())?;
-    }
-
-    u64::try_from(total).map_err(|_| "Transaction history returned an invalid balance.".to_owned())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shared::WalletTransaction;
-
-    #[test]
-    fn total_balance_includes_pending_payment_and_its_fee() {
-        let pending_send = WalletTransaction {
-            transaction_id: "01".repeat(32),
-            net_amount: -1_000_000_165,
-            network_fee: Some(165),
-            coinbase: false,
-            block_height: None,
-            confirmations: 0,
-            timestamp: None,
-            received_addresses: Vec::new(),
-        };
-        let mining_reward = WalletTransaction {
-            transaction_id: "02".repeat(32),
-            net_amount: 51_200_000_488,
-            network_fee: None,
-            coinbase: true,
-            block_height: Some(26_073),
-            confirmations: 802,
-            timestamp: None,
-            received_addresses: Vec::new(),
-        };
-
-        assert_eq!(
-            calculate_total_balance(&[pending_send, mining_reward]),
-            Ok(50_200_000_323)
-        );
     }
 }

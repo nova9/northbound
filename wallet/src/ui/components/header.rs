@@ -1,6 +1,6 @@
 use super::logo::Logo;
-use crate::config::WALLET_NAME;
-use crate::config::WALLET_NETWORK;
+use crate::config::{WALLET_NAME, WALLET_NETWORK};
+use crate::server::ServerClient;
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
 use dioxus::prelude::*;
@@ -49,8 +49,11 @@ pub(crate) fn Header() -> Element {
 
     use_future(move || async move {
         loop {
-            let status = match crate::api::fetch_chain_height().await {
-                Ok(_) => ConnectionStatus::Connected,
+            let status = match ServerClient::from_configured_server() {
+                Ok(server) => match server.fetch_chain_height().await {
+                    Ok(_) => ConnectionStatus::Connected,
+                    Err(_) => ConnectionStatus::Disconnected,
+                },
                 Err(_) => ConnectionStatus::Disconnected,
             };
 

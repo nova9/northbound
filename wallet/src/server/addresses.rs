@@ -6,139 +6,146 @@ use shared::{
 };
 
 use crate::config::MAX_ADDRESSES_PER_REQUEST;
+use crate::server::client::{ServerClient, require_current_index, require_success};
 
-use super::{endpoint, http_client, require_current_index, require_success};
-
-pub(crate) async fn fetch_used_addresses_from_server(
-    addresses: Vec<String>,
-    url: &str,
-) -> Result<Vec<String>, String> {
-    if addresses.is_empty() {
-        return Ok(Vec::new());
-    }
-    let addresses = unique_addresses(addresses);
-    let client = http_client()?;
-    let mut snapshot = None;
-    let mut used_addresses = Vec::new();
-    let mut seen_addresses = HashSet::new();
-
-    for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
-        let request = AddressActivityRequest {
-            addresses: batch.to_vec(),
-        };
-        let response = client
-            .post(url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| format!("could not contact wallet server: {error}"))?;
-        let response = require_success(response, "Could not load address activity").await?;
-        let response = response
-            .json::<AddressActivityResponse>()
-            .await
-            .map_err(|error| format!("wallet server returned invalid address activity: {error}"))?;
-        require_matching_snapshot(&mut snapshot, &response.index, addresses.len())?;
-        for address in response.used_addresses {
-            if !batch.contains(&address) {
-                return Err(
-                    "The wallet server returned activity for an unrequested address.".into(),
-                );
-            }
-            if seen_addresses.insert(address.clone()) {
-                used_addresses.push(address);
-            }
+impl ServerClient {
+    pub(crate) async fn fetch_used_addresses(
+        &self,
+        addresses: Vec<String>,
+    ) -> Result<Vec<String>, String> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
         }
-    }
-    Ok(used_addresses)
-}
+        let addresses = unique_addresses(addresses);
+        let url = self.endpoint("/v1/addresses/activity");
+        let mut snapshot = None;
+        let mut used_addresses = Vec::new();
+        let mut seen_addresses = HashSet::new();
 
-pub async fn fetch_utxos(addresses: Vec<String>) -> Result<Vec<WalletUtxo>, String> {
-    if addresses.is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = endpoint("/v1/utxos")?;
-    fetch_utxos_from_server(addresses, &url).await
-}
-
-async fn fetch_utxos_from_server(
-    addresses: Vec<String>,
-    url: &str,
-) -> Result<Vec<WalletUtxo>, String> {
-    let addresses = unique_addresses(addresses);
-    let client = http_client()?;
-    let mut snapshot = None;
-    let mut utxos = Vec::new();
-    let mut seen_outpoints = HashSet::new();
-
-    for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
-        let mut cursor = None;
-        let mut seen_cursors = HashSet::new();
-        let mut previous_output = None;
-        loop {
-            let request = UtxoRequest {
+        for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
+            let request = AddressActivityRequest {
                 addresses: batch.to_vec(),
-                cursor,
-                limit: Some(DEFAULT_UTXO_PAGE_SIZE),
             };
-            let response = client
-                .post(url)
+            let response = self
+                .http()
+                .post(&url)
                 .json(&request)
                 .send()
                 .await
                 .map_err(|error| format!("could not contact wallet server: {error}"))?;
-            if response.status() == reqwest::StatusCode::CONFLICT {
-                return Err("Spendable outputs changed while loading. Please refresh.".into());
-            }
-            let response = require_success(response, "Could not load spendable outputs").await?;
-            let response = response.json::<UtxoResponse>().await.map_err(|error| {
-                format!("wallet server returned invalid spendable outputs: {error}")
-            })?;
+            let response = require_success(response, "Could not load address activity").await?;
+            let response = response
+                .json::<AddressActivityResponse>()
+                .await
+                .map_err(|error| {
+                    format!("wallet server returned invalid address activity: {error}")
+                })?;
             require_matching_snapshot(&mut snapshot, &response.index, addresses.len())?;
-            if (request.cursor.is_some() || response.next_cursor.is_some())
-                && response.index.pending_revision.is_none()
-            {
-                return Err(
-                    "The wallet server must be updated to support paginated outputs.".into(),
-                );
-            }
-            if response.utxos.len() > usize::from(DEFAULT_UTXO_PAGE_SIZE)
-                || response
-                    .next_cursor
-                    .as_ref()
-                    .is_some_and(|cursor| cursor.len() > MAX_UTXO_CURSOR_LENGTH)
-                || (response.utxos.is_empty() && response.next_cursor.is_some())
-            {
-                return Err("The wallet server returned an invalid spendable output page.".into());
-            }
-            for utxo in response.utxos {
-                let outpoint = (utxo.transaction_id.clone(), utxo.output_index);
-                if !seen_outpoints.insert(outpoint) {
-                    return Err("The wallet server returned a duplicate spendable output.".into());
+            for address in response.used_addresses {
+                if !batch.contains(&address) {
+                    return Err(
+                        "The wallet server returned activity for an unrequested address.".into(),
+                    );
                 }
-                let position = (
-                    utxo.block_height,
-                    utxo.transaction_id.clone(),
-                    utxo.output_index,
-                );
-                if previous_output
-                    .as_ref()
-                    .is_some_and(|previous| previous >= &position)
-                {
-                    return Err("The wallet server returned spendable outputs out of order.".into());
+                if seen_addresses.insert(address.clone()) {
+                    used_addresses.push(address);
                 }
-                previous_output = Some(position);
-                utxos.push(utxo);
-            }
-            cursor = response.next_cursor;
-            let Some(next_cursor) = &cursor else {
-                break;
-            };
-            if !seen_cursors.insert(next_cursor.clone()) {
-                return Err("The wallet server repeated a spendable output cursor.".into());
             }
         }
+        Ok(used_addresses)
     }
-    Ok(utxos)
+
+    pub(crate) async fn fetch_utxos(
+        &self,
+        addresses: Vec<String>,
+    ) -> Result<Vec<WalletUtxo>, String> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addresses = unique_addresses(addresses);
+        let url = self.endpoint("/v1/utxos");
+        let mut snapshot = None;
+        let mut utxos = Vec::new();
+        let mut seen_outpoints = HashSet::new();
+
+        for batch in addresses.chunks(MAX_ADDRESSES_PER_REQUEST) {
+            let mut cursor = None;
+            let mut seen_cursors = HashSet::new();
+            let mut previous_output = None;
+            loop {
+                let request = UtxoRequest {
+                    addresses: batch.to_vec(),
+                    cursor,
+                    limit: Some(DEFAULT_UTXO_PAGE_SIZE),
+                };
+                let response = self
+                    .http()
+                    .post(&url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|error| format!("could not contact wallet server: {error}"))?;
+                if response.status() == reqwest::StatusCode::CONFLICT {
+                    return Err("Spendable outputs changed while loading. Please refresh.".into());
+                }
+                let response =
+                    require_success(response, "Could not load spendable outputs").await?;
+                let response = response.json::<UtxoResponse>().await.map_err(|error| {
+                    format!("wallet server returned invalid spendable outputs: {error}")
+                })?;
+                require_matching_snapshot(&mut snapshot, &response.index, addresses.len())?;
+                if (request.cursor.is_some() || response.next_cursor.is_some())
+                    && response.index.pending_revision.is_none()
+                {
+                    return Err(
+                        "The wallet server must be updated to support paginated outputs.".into(),
+                    );
+                }
+                if response.utxos.len() > usize::from(DEFAULT_UTXO_PAGE_SIZE)
+                    || response
+                        .next_cursor
+                        .as_ref()
+                        .is_some_and(|cursor| cursor.len() > MAX_UTXO_CURSOR_LENGTH)
+                    || (response.utxos.is_empty() && response.next_cursor.is_some())
+                {
+                    return Err(
+                        "The wallet server returned an invalid spendable output page.".into(),
+                    );
+                }
+                for utxo in response.utxos {
+                    let outpoint = (utxo.transaction_id.clone(), utxo.output_index);
+                    if !seen_outpoints.insert(outpoint) {
+                        return Err(
+                            "The wallet server returned a duplicate spendable output.".into()
+                        );
+                    }
+                    let position = (
+                        utxo.block_height,
+                        utxo.transaction_id.clone(),
+                        utxo.output_index,
+                    );
+                    if previous_output
+                        .as_ref()
+                        .is_some_and(|previous| previous >= &position)
+                    {
+                        return Err(
+                            "The wallet server returned spendable outputs out of order.".into()
+                        );
+                    }
+                    previous_output = Some(position);
+                    utxos.push(utxo);
+                }
+                cursor = response.next_cursor;
+                let Some(next_cursor) = &cursor else {
+                    break;
+                };
+                if !seen_cursors.insert(next_cursor.clone()) {
+                    return Err("The wallet server repeated a spendable output cursor.".into());
+                }
+            }
+        }
+        Ok(utxos)
+    }
 }
 
 pub(super) fn unique_addresses(addresses: Vec<String>) -> Vec<String> {
@@ -181,9 +188,10 @@ fn require_matching_snapshot(
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    use shared::MAX_UTXO_CURSOR_LENGTH;
 
-    use super::*;
-    use crate::api::test_support::{addresses, index, serve};
+    use super::{ServerClient, unique_addresses};
+    use crate::server::test_support::{addresses, index, serve};
 
     fn response(request: &Value, activity: bool) -> Value {
         if activity {
@@ -212,13 +220,14 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
+        let client = ServerClient::new(url).unwrap();
         runtime.block_on(async {
             if activity {
-                let used = fetch_used_addresses_from_server(addresses.clone(), url).await?;
+                let used = client.fetch_used_addresses(addresses.clone()).await?;
                 assert_eq!(used, unique_addresses(addresses));
                 return Ok(used.len());
             }
-            let utxos = fetch_utxos_from_server(addresses, url).await?;
+            let utxos = client.fetch_utxos(addresses).await?;
             for utxo in &utxos {
                 assert_eq!(utxo.amount, 100_000_000);
             }
@@ -429,14 +438,16 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
+        let client = ServerClient::new("http://127.0.0.1:1").unwrap();
         runtime.block_on(async {
             assert!(
-                fetch_used_addresses_from_server(Vec::new(), "http://127.0.0.1:1")
+                client
+                    .fetch_used_addresses(Vec::new())
                     .await
                     .unwrap()
                     .is_empty()
             );
-            assert!(fetch_utxos(Vec::new()).await.unwrap().is_empty());
+            assert!(client.fetch_utxos(Vec::new()).await.unwrap().is_empty());
         });
     }
 }

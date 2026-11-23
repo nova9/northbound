@@ -91,6 +91,8 @@ pub(crate) fn remove_wallet_file(
 }
 
 pub(crate) fn open_wallet_folder(folder: &Path) -> Result<(), String> {
+    fs::create_dir_all(folder)
+        .map_err(|error| format!("Could not create the wallet folder: {error}"))?;
     let folder = folder
         .canonicalize()
         .map_err(|error| format!("Could not find the wallet folder: {error}"))?;

@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
 use crate::config::WALLET_NETWORK;
-use crate::wallet_secrets::{
+use crate::storage::secrets::{
     ENCRYPTION_ALGORITHM, EncryptedWalletSecrets, KEY_DERIVATION_ALGORITHM, KeyDerivationParameters,
 };
 
@@ -25,6 +25,27 @@ pub(crate) enum WalletFileVersion {
 pub(crate) struct LoadedWalletFile {
     pub(crate) version: WalletFileVersion,
     pub(crate) encrypted_wallet: EncryptedWalletSecrets,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedWalletFile {
+    version: u32,
+    network: String,
+    key_derivation: KeyDerivationSettings,
+    encryption: String,
+    salt: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyDerivationSettings {
+    algorithm: String,
+    memory_cost_kib: u32,
+    iterations: u32,
+    parallelism: u32,
 }
 
 pub(crate) fn save_new(
@@ -47,27 +68,6 @@ pub(crate) fn save_new(
     result?;
     cleanup
         .map_err(|error| format!("Wallet saved, but could not remove its temporary file: {error}"))
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SerializedWalletFile {
-    version: u32,
-    network: String,
-    key_derivation: KeyDerivationSettings,
-    encryption: String,
-    salt: String,
-    nonce: String,
-    ciphertext: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct KeyDerivationSettings {
-    algorithm: String,
-    memory_cost_kib: u32,
-    iterations: u32,
-    parallelism: u32,
 }
 
 pub fn save(path: &Path, encrypted_wallet: &EncryptedWalletSecrets) -> Result<(), String> {
@@ -247,7 +247,7 @@ mod tests {
 
     use super::{BASE64, WalletFileVersion, decode_wallet_file, encode_wallet_file, load, save};
     use crate::config::WALLET_NETWORK;
-    use crate::wallet_secrets::{
+    use crate::storage::secrets::{
         DecryptedWalletSecrets, EncryptedWalletSecrets, KeyDerivationParameters,
     };
 

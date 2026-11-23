@@ -1,25 +1,8 @@
 use dioxus::prelude::*;
 use shared::{COINBASE_MATURITY_CONFIRMATIONS, WalletTransaction};
 
-use crate::config::CURRENCY_TICKER;
-
-const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
-
-fn copy_text(value: &str, label: &str) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|error| format!("Could not access the clipboard: {error}"))?;
-
-    clipboard
-        .set_text(value)
-        .map_err(|error| format!("Could not copy {label}: {error}"))
-}
-
-fn format_north(amount: u64) -> String {
-    let whole_units = amount / ATOMIC_UNITS_PER_NORTH;
-    let fractional_units = amount % ATOMIC_UNITS_PER_NORTH;
-
-    format!("{whole_units}.{fractional_units:08} {CURRENCY_TICKER}")
-}
+use crate::amount::format_north_with_ticker;
+use crate::ui::clipboard::copy_text;
 
 fn status_label(transaction: &WalletTransaction) -> &'static str {
     if is_immature_mining_reward(transaction) {
@@ -76,7 +59,7 @@ fn net_wallet_change(transaction: &WalletTransaction) -> String {
     };
     format!(
         "{sign}{}",
-        format_north(transaction.net_amount.unsigned_abs())
+        format_north_with_ticker(transaction.net_amount.unsigned_abs())
     )
 }
 
@@ -93,7 +76,7 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
     let selected_status = status_label(selected_transaction);
     let selected_fee = selected_transaction
         .network_fee
-        .map(format_north)
+        .map(format_north_with_ticker)
         .unwrap_or_else(|| "Not applicable".to_owned());
     let status_class = if is_immature_mining_reward(selected_transaction) {
         "transaction-status immature"
@@ -301,9 +284,10 @@ pub(crate) fn TransactionHistoryView(transactions: Vec<WalletTransaction>) -> El
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENCY_TICKER, format_confirmation_count, format_north, is_receive_item,
-        net_wallet_change, status_label, transaction_label,
+        format_confirmation_count, is_receive_item, net_wallet_change, status_label,
+        transaction_label,
     };
+    use crate::config::CURRENCY_TICKER;
     use shared::WalletTransaction;
 
     #[test]
@@ -339,14 +323,6 @@ mod tests {
         );
         transaction.net_amount = i64::MIN;
         assert!(net_wallet_change(&transaction).starts_with('−'));
-    }
-
-    #[test]
-    fn atomic_units_are_formatted_as_north() {
-        assert_eq!(
-            format_north(1_025_000_001),
-            format!("10.25000001 {CURRENCY_TICKER}")
-        );
     }
 
     #[test]

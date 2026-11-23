@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 
+use crate::config::wallet_directory;
+use crate::storage::catalog::{WalletFile, remove_wallet_file};
 use crate::ui::components::{ErrorMessage, Field, ModalDialog};
 use crate::ui::state::AppContext;
-use crate::wallet_catalog::{WalletFile, remove_wallet_file};
 
 #[component]
-pub(super) fn RemoveWallet(
+pub(crate) fn RemoveWalletDialog(
     wallet: WalletFile,
     on_cancel: EventHandler<()>,
     on_removed: EventHandler<()>,
@@ -46,7 +47,7 @@ pub(super) fn RemoveWallet(
                 button {
                     class: "button danger", r#type: "button", disabled: !can_remove,
                     onclick: move |_| {
-                        let result = crate::config::wallet_directory().and_then(|folder| {
+                        let result = wallet_directory().and_then(|folder| {
                             remove_wallet_file(&folder, &wallet, &confirmed_name(), backup_confirmed())
                         });
                         match result {

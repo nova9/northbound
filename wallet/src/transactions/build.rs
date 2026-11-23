@@ -3,8 +3,8 @@ use bitcoin::transaction::Version;
 use bitcoin::{Amount, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 
 use crate::config::WALLET_NETWORK;
-use crate::p2qrh;
-use crate::transaction_plan::TransactionPlan;
+use crate::crypto::p2qrh;
+use crate::transactions::plan::TransactionPlan;
 
 pub fn build_unsigned_transaction(
     plan: &TransactionPlan,
@@ -86,9 +86,9 @@ mod tests {
 
     use super::build_unsigned_transaction;
     use crate::config::WALLET_NETWORK;
-    use crate::local_wallet::{VerifiedUtxo, WalletKeychain};
-    use crate::p2qrh;
-    use crate::transaction_plan::TransactionPlan;
+    use crate::crypto::p2qrh;
+    use crate::transactions::plan::TransactionPlan;
+    use crate::transactions::utxo::{VerifiedUtxo, WalletKeychain};
 
     fn test_address() -> String {
         p2qrh::address_from_public_key(&[2_u8; 32], WALLET_NETWORK)

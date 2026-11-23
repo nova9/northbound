@@ -1,18 +1,19 @@
 use dioxus::prelude::*;
 
-use crate::keys;
-use crate::local_wallet::save_new_wallet_and_unlock;
+use crate::config::wallet_directory;
+use crate::storage::catalog;
 use crate::ui::components::{ErrorMessage, Field, RecoveryWords};
 use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
 use crate::ui::state::AppContext;
+use crate::wallet::{generate_new_wallet, save_new_wallet_and_unlock};
 
 #[component]
 pub(crate) fn NewWallet() -> Element {
     let mut context = use_context::<AppContext>();
     let navigator = use_navigator();
     let mut wallet_name = use_signal(String::new);
-    let pending_wallet = use_signal(keys::generate_new_wallet);
+    let pending_wallet = use_signal(generate_new_wallet);
     let mut entered_phrase = use_signal(SensitiveText::default);
     let mut password = use_signal(SensitiveText::default);
     let mut password_confirmation = use_signal(SensitiveText::default);
@@ -95,8 +96,8 @@ pub(crate) fn NewWallet() -> Element {
                                 class: "button primary submit-button",
                                 onclick: move |_| {
                                     let result = (|| {
-                                        let directory = crate::config::wallet_directory()?;
-                                        let wallet_file = crate::wallet_catalog::find_new_wallet_path(&directory, &wallet_name())?;
+                                        let directory = wallet_directory()?;
+                                        let wallet_file = catalog::find_new_wallet_path(&directory, &wallet_name())?;
                                         let pending_wallet = pending_wallet.read();
                                         let entered_phrase = entered_phrase.read();
                                         let password = password.read();

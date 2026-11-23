@@ -1,10 +1,12 @@
 use dioxus::prelude::*;
 
-use crate::local_wallet::save_restored_wallet_and_unlock;
+use crate::config::wallet_directory;
+use crate::storage::catalog;
 use crate::ui::components::{ErrorMessage, Field};
 use crate::ui::routes::Route;
 use crate::ui::sensitive_text::SensitiveText;
 use crate::ui::state::AppContext;
+use crate::wallet::save_restored_wallet_and_unlock;
 
 #[component]
 pub(crate) fn Restore() -> Element {
@@ -64,9 +66,9 @@ pub(crate) fn Restore() -> Element {
                     r#type: "button",
                     onclick: move |_| {
                         let result = (|| {
-                            let directory = crate::config::wallet_directory()?;
+                            let directory = wallet_directory()?;
                             let wallet_file =
-                                crate::wallet_catalog::find_new_wallet_path(&directory, &wallet_name())?;
+                                catalog::find_new_wallet_path(&directory, &wallet_name())?;
                             let phrase = recovery_phrase.read();
                             let wallet_password = password.read();
                             let confirmation = password_confirmation.read();

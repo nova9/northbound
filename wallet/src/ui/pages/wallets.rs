@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
 
 use crate::config::wallet_directory;
-use crate::ui::components::ErrorMessage;
+use crate::storage::catalog::{WalletFile, open_wallet_folder, read_wallet_files};
+use crate::ui::components::{ErrorMessage, RemoveWalletDialog};
 use crate::ui::routes::Route;
 use crate::ui::state::AppContext;
-use crate::wallet_catalog::{WalletFile, open_wallet_folder, read_wallet_files};
 
 #[component]
 pub(crate) fn Wallets() -> Element {
@@ -46,12 +46,7 @@ pub(crate) fn Wallets() -> Element {
                 button {
                     class: "button secondary", r#type: "button",
                     onclick: move |_| {
-                        let result = (|| {
-                            let folder = wallet_directory()?;
-                            std::fs::create_dir_all(&folder)
-                                .map_err(|message| format!("Could not create the wallet folder: {message}"))?;
-                            open_wallet_folder(&folder)
-                        })();
+                        let result = wallet_directory().and_then(|folder| open_wallet_folder(&folder));
                         error.set(result.err());
                     },
                     "Open wallet folder"
@@ -117,7 +112,7 @@ pub(crate) fn Wallets() -> Element {
                     ErrorMessage { message: message.to_owned() }
                 }
                 if let Some(wallet) = removing() {
-                    super::remove_wallet::RemoveWallet {
+                    RemoveWalletDialog {
                         key: "{wallet.path.display()}",
                         wallet,
                         on_cancel: move |_| removing.set(None),

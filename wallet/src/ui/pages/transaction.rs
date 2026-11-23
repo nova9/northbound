@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use crate::server::ServerClient;
 use crate::ui::components::TransactionHistoryView;
 use crate::ui::state::AppContext;
 
@@ -20,8 +21,11 @@ pub(crate) fn Transaction(txid: String) -> Element {
 
         async move {
             let scanner = address_scanner?;
-            let discovered = scanner.discover_addresses().await?;
-            crate::api::fetch_transaction_history(discovered.tracked_addresses()).await
+            let server = ServerClient::from_configured_server()?;
+            let discovered = scanner.discover_addresses(&server).await?;
+            server
+                .fetch_transaction_history(discovered.tracked_addresses())
+                .await
         }
     });
 

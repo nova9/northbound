@@ -1,14 +1,14 @@
-use bitcoin::consensus::encode;
 use dioxus::prelude::*;
 
+use crate::amount::{format_north, format_optional_north_with_ticker, parse_north};
 use crate::config::{CURRENCY_TICKER, WALLET_NETWORK};
-use crate::local_wallet::{UnlockedWallet, VerifiedUtxo, calculate_spendable_balance};
-use crate::p2qrh;
-use crate::transaction_plan::{TransactionPlan, create_transaction_plan};
+use crate::crypto::p2qrh;
+use crate::server::ServerClient;
+use crate::transactions::{
+    TransactionPlan, VerifiedUtxo, calculate_spendable_balance, create_transaction_plan,
+    fee_is_large_share_of_payment,
+};
 use crate::ui::state::AppContext;
-use crate::unsigned_transaction::build_unsigned_transaction;
-
-const ATOMIC_UNITS_PER_NORTH: u64 = 100_000_000;
 
 #[derive(Clone)]
 enum SendState {
@@ -23,11 +23,6 @@ enum SendState {
 struct SpendableFunds {
     verified_utxos: Vec<VerifiedUtxo>,
     change_address: String,
-}
-
-struct SignedTransaction {
-    transaction_hex: String,
-    transaction_id: String,
 }
 
 #[component]
@@ -53,8 +48,9 @@ pub(crate) fn Send() -> Element {
 
         async move {
             let scanner = address_scanner?;
-            let discovered = scanner.discover_addresses().await?;
-            let utxos = crate::api::fetch_utxos(discovered.tracked_addresses()).await?;
+            let server = ServerClient::from_configured_server()?;
+            let discovered = scanner.discover_addresses(&server).await?;
+            let utxos = server.fetch_utxos(discovered.tracked_addresses()).await?;
             let verified_utxos = scanner.verify_utxos(utxos, &discovered)?;
             let change_address = discovered.active_change_address()?.to_owned();
 
@@ -64,7 +60,10 @@ pub(crate) fn Send() -> Element {
             })
         }
     });
-    let fee_estimate = use_resource(crate::api::fetch_fee_estimate);
+    let fee_estimate = use_resource(|| async {
+        let server = ServerClient::from_configured_server()?;
+        server.fetch_fee_estimate().await
+    });
 
     let spendable_funds_state = spendable_funds.read().clone();
     let available_balance = spendable_funds_state
@@ -208,7 +207,7 @@ pub(crate) fn Send() -> Element {
                                 }
                             }
                         }
-                        span { "{format_optional_north(reviewed_fee)}" }
+                        span { "{format_optional_north_with_ticker(reviewed_fee)}" }
                     }
 
                     if let Some(Err(message)) = &fee_estimate_state {
@@ -232,19 +231,19 @@ pub(crate) fn Send() -> Element {
                     dl {
                         div {
                             dt { "Amount" }
-                            dd { "{format_optional_north(reviewed_plan.as_ref().map(|plan| plan.recipient_amount).or(entered_amount))}" }
+                            dd { "{format_optional_north_with_ticker(reviewed_plan.as_ref().map(|plan| plan.recipient_amount).or(entered_amount))}" }
                         }
                         div {
                             dt { "Estimated fee" }
-                            dd { "{format_optional_north(reviewed_fee)}" }
+                            dd { "{format_optional_north_with_ticker(reviewed_fee)}" }
                         }
                         div { class: "send-total",
                             dt { "Total" }
-                            dd { "{format_optional_north(reviewed_total)}" }
+                            dd { "{format_optional_north_with_ticker(reviewed_total)}" }
                         }
                         div {
                             dt { "Remaining balance" }
-                            dd { "{format_optional_north(reviewed_remaining)}" }
+                            dd { "{format_optional_north_with_ticker(reviewed_remaining)}" }
                         }
                     }
 
@@ -277,7 +276,7 @@ pub(crate) fn Send() -> Element {
                                             let result = {
                                                 let wallet = context.unlocked_wallet.read();
                                                 match wallet.as_ref() {
-                                                    Some(wallet) => build_and_sign_transaction(wallet, &plan, &recipient()),
+                                                    Some(wallet) => wallet.build_and_sign_transaction(&plan, &recipient()),
                                                     None => Err("Unlock the wallet again to send the transaction.".to_owned()),
                                                 }
                                             };
@@ -290,11 +289,20 @@ pub(crate) fn Send() -> Element {
                                                 }
                                             };
                                             spawn(async move {
+                                                let server = match ServerClient::from_configured_server() {
+                                                    Ok(server) => server,
+                                                    Err(message) => {
+                                                        send_state.set(SendState::Failed(message));
+                                                        return;
+                                                    }
+                                                };
                                                 let expected_transaction_id = signed_transaction.transaction_id;
-                                                match crate::api::broadcast_signed_transaction(signed_transaction.transaction_hex).await {
+                                                match server.broadcast_signed_transaction(signed_transaction.transaction_hex).await {
                                                     Ok(transaction_id) => send_state.set(SendState::Sent(transaction_id)),
                                                     Err(broadcast_error) => {
-                                                        let status = crate::api::fetch_transaction_status(expected_transaction_id.clone()).await;
+                                                        let status = server
+                                                            .fetch_transaction_status(expected_transaction_id.clone())
+                                                            .await;
                                                         send_state.set(send_state_after_status_check(
                                                             expected_transaction_id, broadcast_error, status,
                                                         ));
@@ -353,20 +361,6 @@ fn send_state_after_status_check(
     }
 }
 
-fn build_and_sign_transaction(
-    wallet: &UnlockedWallet,
-    plan: &TransactionPlan,
-    recipient: &str,
-) -> Result<SignedTransaction, String> {
-    let mut transaction = build_unsigned_transaction(plan, recipient)?;
-    wallet.sign_p2qrh_transaction(&mut transaction, &plan.inputs)?;
-
-    Ok(SignedTransaction {
-        transaction_id: transaction.compute_txid().to_string(),
-        transaction_hex: encode::serialize_hex(&transaction),
-    })
-}
-
 fn prepare_transaction_plan(
     recipient: &str,
     amount: &str,
@@ -403,97 +397,9 @@ fn prepare_transaction_plan(
     )
 }
 
-fn parse_north(value: &str) -> Result<u64, String> {
-    let value = value.trim();
-    let (whole_part, fractional_part) = value.split_once('.').unwrap_or((value, ""));
-
-    if whole_part.is_empty() || fractional_part.len() > 8 {
-        return Err("Enter an amount with no more than eight decimal places.".to_owned());
-    }
-
-    let whole_units = whole_part
-        .parse::<u64>()
-        .map_err(|_| format!("Enter a valid {CURRENCY_TICKER} amount."))?;
-    let fractional_units = if fractional_part.is_empty() {
-        0
-    } else {
-        let fraction = fractional_part
-            .parse::<u64>()
-            .map_err(|_| format!("Enter a valid {CURRENCY_TICKER} amount."))?;
-        fraction * 10_u64.pow((8 - fractional_part.len()) as u32)
-    };
-
-    whole_units
-        .checked_mul(ATOMIC_UNITS_PER_NORTH)
-        .and_then(|units| units.checked_add(fractional_units))
-        .ok_or_else(|| "The payment amount is too large.".to_owned())
-}
-
-fn format_north(amount: u64) -> String {
-    let whole_units = amount / ATOMIC_UNITS_PER_NORTH;
-    let fractional_units = amount % ATOMIC_UNITS_PER_NORTH;
-
-    format!("{whole_units}.{fractional_units:08}")
-}
-
-fn format_optional_north(amount: Option<u64>) -> String {
-    match amount {
-        Some(amount) => format!("{} {CURRENCY_TICKER}", format_north(amount)),
-        None => "—".to_owned(),
-    }
-}
-
-fn fee_is_large_share_of_payment(fee: u64, payment_amount: u64) -> bool {
-    fee >= payment_amount.div_ceil(10)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{fee_is_large_share_of_payment, parse_north};
-    use crate::local_wallet::{DiscoveredWalletAddresses, ReceivingAddress};
-
-    fn wallet_and_plan(
-        path: &std::path::Path,
-    ) -> (super::UnlockedWallet, super::TransactionPlan, String) {
-        let pending = crate::keys::generate_new_wallet().unwrap();
-        let wallet = crate::local_wallet::save_new_wallet_and_unlock(
-            path,
-            &pending,
-            pending.recovery_phrase(),
-            "test password",
-            "test password",
-        )
-        .unwrap();
-        let scanner = wallet.address_scanner();
-        let recipient = scanner.receiving_address_at(0).unwrap();
-        let change_address = scanner.change_address_at(0).unwrap();
-        let discovered = DiscoveredWalletAddresses {
-            receiving_addresses: vec![ReceivingAddress {
-                index: 0,
-                address: recipient.clone(),
-            }],
-            change_addresses: vec![change_address.clone()],
-        };
-        let script =
-            crate::p2qrh::script_pubkey_from_address(&recipient, crate::config::WALLET_NETWORK)
-                .unwrap();
-        let utxos = scanner
-            .verify_utxos(
-                vec![shared::WalletUtxo {
-                    transaction_id: "ab".repeat(32),
-                    output_index: 0,
-                    amount: 100_000,
-                    script_pubkey: bitcoin::hex::DisplayHex::as_hex(script.as_slice()).to_string(),
-                    block_height: 1,
-                    confirmations: 1,
-                    coinbase: false,
-                }],
-                &discovered,
-            )
-            .unwrap();
-        let plan = super::create_transaction_plan(utxos, 50_000, 1_001, change_address).unwrap();
-        (wallet, plan, recipient)
-    }
+    use super::{SendState, send_state_after_status_check};
 
     #[test]
     fn broadcast_errors_require_status_checks_and_preserve_uncertainty_and_reasons() {
@@ -501,52 +407,19 @@ mod tests {
             "Could not send the transaction: dust",
             "could not contact wallet server",
         ] {
-            let sent = super::send_state_after_status_check(
-                "txid".into(),
-                broadcast_error.into(),
-                Ok(true),
-            );
-            assert!(matches!(sent, super::SendState::Sent(id) if id == "txid"));
-            let unknown = super::send_state_after_status_check(
-                "txid".into(),
-                broadcast_error.into(),
-                Ok(false),
-            );
-            assert!(
-                matches!(unknown, super::SendState::Uncertain(message) if message == broadcast_error)
-            );
-            let unavailable = super::send_state_after_status_check(
+            let sent =
+                send_state_after_status_check("txid".into(), broadcast_error.into(), Ok(true));
+            assert!(matches!(sent, SendState::Sent(id) if id == "txid"));
+            let unknown =
+                send_state_after_status_check("txid".into(), broadcast_error.into(), Ok(false));
+            assert!(matches!(unknown, SendState::Uncertain(message) if message == broadcast_error));
+            let unavailable = send_state_after_status_check(
                 "txid".into(),
                 broadcast_error.into(),
                 Err("node unavailable".into()),
             );
-            assert!(matches!(unavailable, super::SendState::Uncertain(message)
+            assert!(matches!(unavailable, SendState::Uncertain(message)
                 if message.contains(broadcast_error) && message.contains("node unavailable")));
         }
-    }
-
-    #[test]
-    fn signing_a_transaction_does_not_modify_the_wallet_file() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("wallet.json");
-        let (wallet, plan, recipient) = wallet_and_plan(&path);
-        let file_before = std::fs::read(&path).unwrap();
-
-        let signed = super::build_and_sign_transaction(&wallet, &plan, &recipient).unwrap();
-        assert!(!signed.transaction_hex.is_empty());
-        assert_eq!(signed.transaction_id.len(), 64);
-        assert_eq!(std::fs::read(&path).unwrap(), file_before);
-    }
-
-    #[test]
-    fn north_amount_is_parsed_without_floating_point() {
-        assert_eq!(parse_north("1.25000001"), Ok(125_000_001));
-    }
-
-    #[test]
-    fn fee_warning_starts_at_ten_percent_of_the_payment() {
-        assert!(!fee_is_large_share_of_payment(9_999, 100_000));
-        assert!(fee_is_large_share_of_payment(10_000, 100_000));
-        assert!(!fee_is_large_share_of_payment(10_000, 100_001));
     }
 }
