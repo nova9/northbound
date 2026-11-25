@@ -39,20 +39,16 @@ nav a:hover { text-decoration: underline; }
 .hero-actions .button { margin-top: 28px; }
 .screenshot-carousel { max-width: 1040px; margin: 48px auto 0; }
 .carousel-picker { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; }
-.carousel-picker button { min-height: 44px; padding: 10px 20px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer; }
+.carousel-picker button { position: relative; overflow: hidden; min-height: 44px; padding: 10px 20px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer; }
 .carousel-picker button:hover { color: var(--blue); background: #d9e9ff; }
 .carousel-picker button[aria-pressed="true"] { background: white; color: var(--ink); font-weight: 600; }
+.carousel-picker button[aria-pressed="true"]::after { content: ""; position: absolute; inset-inline: 0; bottom: 0; height: 3px; background: var(--blue); transform-origin: left; transform: scaleX(0); }
+.screenshot-carousel.is-counting .carousel-picker button[aria-pressed="true"]::after { animation: carousel-countdown var(--slide-duration, 5000ms) linear forwards; }
+@keyframes carousel-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.carousel-picker[hidden] { display: none; }
 .screenshot-track { display: flex; overflow-x: auto; aspect-ratio: 27 / 16; border-radius: 12px; background: white; box-shadow: 0 14px 32px -12px rgb(32 46 64 / 25%); scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: var(--muted) #e8eef6; }
 .screenshot-slide { flex: 0 0 100%; min-width: 0; height: 100%; margin: 0; scroll-snap-align: start; }
 .screenshot-slide img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.carousel-controls { display: grid; grid-template-columns: 1fr auto 44px 44px; align-items: center; gap: 8px; margin-top: 16px; }
-.carousel-controls[hidden], .carousel-picker[hidden] { display: none; }
-.carousel-controls button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid #bdcadb; border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
-.carousel-controls button:hover { background: white; color: var(--blue); border-color: var(--blue); }
-.carousel-status { grid-column: 1; grid-row: 1; color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
-.carousel-controls .carousel-autoplay { grid-column: 2; width: auto; padding-inline: 16px; font: inherit; font-size: .85rem; }
-.carousel-previous { grid-column: 3; grid-row: 1; }
-.carousel-next { grid-column: 4; grid-row: 1; }
 .button { display: inline-flex; justify-content: space-between; align-items: center; gap: 32px; min-height: 54px; padding: 16px 22px; border-radius: 6px; background: var(--blue); color: white; font-weight: 600; text-decoration: none; flex-shrink: 0; }
 .button:hover { color: white; background: var(--blue-hover); }
 .ownership { padding-block: 72px; background: #243b59; color: white; }
@@ -142,11 +138,6 @@ a.platform-download:hover { background: var(--blue-hover); color: white; }
   .carousel-picker { gap: 0; margin-bottom: 12px; }
   .carousel-picker button { flex: 1; padding: 10px 4px; font-size: .8rem; }
   .screenshot-track { border-radius: 6px; }
-  .carousel-controls { grid-template-columns: 1fr 44px 44px; margin-top: 12px; gap: 8px; }
-  .carousel-status { grid-column: 1 / -1; font-size: .8rem; }
-  .carousel-controls .carousel-autoplay { grid-column: 1; grid-row: 2; justify-self: start; }
-  .carousel-previous { grid-column: 2; grid-row: 2; }
-  .carousel-next { grid-column: 3; grid-row: 2; }
   .ownership { padding-block: 48px; }
   .ownership-layout, .open-source { grid-template-columns: 1fr; gap: 36px; }
   .ownership-intro p { max-width: 45ch; }

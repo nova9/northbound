@@ -7,12 +7,11 @@ __pycache__/
 /.codex/
 /.impeccable/
 
-# Temporary files
-/ANNOUNCEMENT.md
-/INDEXER_IMPLEMENTATION.md
-/scratchpad.txt
-/MINING_API_PLAN.md
-/todo.md
+/.graph-it
 
 /website/release.json
-/.graph-it
+
+
+# Temporary files
+/scratchpad.txt
+/todo.md

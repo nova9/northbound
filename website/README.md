@@ -92,13 +92,12 @@ magick website/assets/wallet-send.png -quality 75 website/assets/wallet-send.avi
 
 The carousel uses a fixed 27:16 screenshot area without an outer frame, with
 direct Welcome, Send, History, and Wallets selectors and a visible selected state.
-It supports previous/next buttons, left/right arrow keys when its
-image track is focused, and native touch scrolling. Slides advance every five
-seconds, with a Play/Pause control. Rotation pauses on hover, keyboard focus,
-touch interaction, and hidden browser tabs. Reduced-motion preferences disable
-automatic rotation by default; visitors can still choose Play. Without JavaScript, screenshots remain
-available in the horizontally scrollable track. Release generation copies
-`carousel.js` alongside the HTML and CSS.
+It supports left/right arrow keys when its image track is focused and native
+touch scrolling. Slides advance every five seconds with a countdown bar on the
+active selector, and pause on hover, keyboard focus, touch interaction, hidden
+browser tabs, and reduced-motion preferences.
+Without JavaScript, screenshots remain available in the horizontally scrollable
+track. Release generation copies `carousel.js` alongside the HTML and CSS.
 The styled carousel was checked at 1440px, 768px, 390px, and 320px with no
 horizontal overflow. Browser checks covered selectors, previous/next wraparound,
 keyboard navigation, image loading, reduced motion, and the no-JavaScript fallback.
