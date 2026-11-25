@@ -312,3 +312,47 @@ fn order_parents_before_children(transactions: Vec<Transaction>) -> Result<Vec<T
 
     Ok(ordered)
 }
+
+#[cfg(test)]
+mod tests {
+    use truenorth_rpc::{Hash, Outpoint, Transaction};
+
+    use super::order_parents_before_children;
+    use crate::test_support::hash;
+
+    fn pending_tx(id: u64, parents: &[u64]) -> Transaction {
+        let mut inputs = Vec::new();
+        for parent in parents {
+            inputs.push(Outpoint {
+                txid: hash(*parent),
+                vout: 0,
+            });
+        }
+        Transaction {
+            txid: hash(id),
+            is_coinbase: false,
+            inputs,
+            outputs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn orders_unconfirmed_parents_before_children() {
+        let grandparent = pending_tx(1, &[99]);
+        let parent = pending_tx(2, &[1]);
+        let child = pending_tx(3, &[2]);
+
+        let ordered = order_parents_before_children(vec![child, parent, grandparent]).unwrap();
+        let ids: Vec<Hash> = ordered.into_iter().map(|tx| tx.txid).collect();
+        assert_eq!(ids, vec![hash(1), hash(2), hash(3)]);
+    }
+
+    #[test]
+    fn rejects_duplicate_and_cyclic_pending_transactions() {
+        let duplicate = order_parents_before_children(vec![pending_tx(1, &[]), pending_tx(1, &[])]);
+        assert!(duplicate.is_err());
+
+        let cycle = order_parents_before_children(vec![pending_tx(1, &[2]), pending_tx(2, &[1])]);
+        assert!(cycle.is_err());
+    }
+}

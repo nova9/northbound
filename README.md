@@ -151,7 +151,8 @@ Run the automated tests:
 cargo test --workspace
 ```
 
-Run the P2QRH checks against an isolated TrueNorth Core regtest node:
+Run the isolated TrueNorth Core regtest suites across the whole workspace
+(`wallet`, `indexer`, and `server`):
 
 ```bash
 ./scripts/test-truenorth-integration.sh

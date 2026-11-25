@@ -1,5 +1,7 @@
 use std::{env, process::Command};
 
+use serde_json::Value;
+
 pub fn print_balances(step: &str, core_balance: &str, northbound_balance: &str) {
     println!("{step}:");
     println!("  Core funding wallet: {core_balance} NORTH");
@@ -14,6 +16,15 @@ pub fn run_funding_wallet_cli(arguments: &[&str]) -> String {
     wallet_arguments.extend_from_slice(arguments);
 
     run_cli(&wallet_arguments)
+}
+
+pub fn funding_wallet_cli_json(arguments: &[&str]) -> Value {
+    serde_json::from_str(&run_funding_wallet_cli(arguments))
+        .expect("truenorth-cli output should be valid JSON")
+}
+
+pub fn cli_json(arguments: &[&str]) -> Value {
+    serde_json::from_str(&run_cli(arguments)).expect("truenorth-cli output should be valid JSON")
 }
 
 pub fn run_cli(arguments: &[&str]) -> String {

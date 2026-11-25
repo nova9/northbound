@@ -2,13 +2,51 @@
 
 set -eu
 
-test_package=${1:-wallet}
-case "$test_package" in
-    wallet | indexer | server) ;;
-    *) echo "Usage: $0 [wallet|indexer|server]" >&2; exit 1 ;;
+verbose=${VERBOSE:-0}
+target=""
+test_filter=""
+usage="Usage: $0 [-v|--verbose] [all|workspace|wallet|indexer|server] [test_filter]"
+
+for argument in "$@"; do
+    case "$argument" in
+        -v | --verbose)
+            verbose=1
+            ;;
+        --workspace)
+            if [ -z "$target" ]; then
+                target=all
+            else
+                echo "$usage" >&2
+                exit 1
+            fi
+            ;;
+        -*)
+            echo "$usage" >&2
+            exit 1
+            ;;
+        *)
+            if [ -z "$target" ]; then
+                target=$argument
+            elif [ -z "$test_filter" ]; then
+                test_filter=$argument
+            else
+                echo "$usage" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+target=${target:-all}
+case "$target" in
+    wallet | indexer | server | all | workspace | --workspace) ;;
+    *) echo "$usage" >&2; exit 1 ;;
 esac
-if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [wallet|indexer|server]" >&2
+if [ "$target" = workspace ] || [ "$target" = --workspace ]; then
+    target=all
+fi
+if [ "$target" = all ] && [ -n "$test_filter" ]; then
+    echo "Cannot combine whole-workspace run with a test filter; select one crate." >&2
     exit 1
 fi
 
@@ -29,6 +67,7 @@ test_data_directory=""
 rpc_port=$((20000 + ($$ % 10000)))
 p2p_port=$((rpc_port + 1))
 daemon_pid=""
+completed_suites=""
 
 cleanup() {
     if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
@@ -49,11 +88,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 run_integration_tests() {
-    transaction_index=$1
+    test_package=$1
+    transaction_index=$2
+    suite_label="$test_package (txindex=$transaction_index)"
     test_data_directory=$(mktemp -d "$test_cache_directory/regtest.XXXXXX")
     node_log="$test_data_directory/truenorthd.log"
 
-    echo "Starting TrueNorth Core regtest node (txindex=$transaction_index)..."
+    printf '\n==> %s\n' "$suite_label"
 
     # Indexed API reads must work without the daemon's historical scan index.
     block_filter_index=1
@@ -100,7 +141,9 @@ run_integration_tests() {
         sleep 0.25
     done
 
-    echo "TrueNorth Core is ready on RPC port $rpc_port"
+    if [ "$verbose" = 1 ]; then
+        echo "TrueNorth Core is ready on RPC port $rpc_port"
+    fi
 
     # Keep repeated CLI connection arguments in one visible helper.
     run_truenorth_cli() {
@@ -111,7 +154,6 @@ run_integration_tests() {
             "$@"
     }
 
-    echo "Creating the integration-test funding wallet..."
     run_truenorth_cli createwallet funding >/dev/null
 
     # Let the Rust test use this exact temporary node and funding wallet.
@@ -122,24 +164,56 @@ run_integration_tests() {
     export TRUENORTH_TEST_ISOLATED="1"
 
     # These tests share a node and funding wallet, so keep mining and spending sequential.
-    echo "Running Northbound integration tests..."
-
     cd "$repository_directory"
 
-    cargo test \
-        -p "$test_package" \
-        --test truenorth_regtest \
-        -- \
-        --ignored \
-        --nocapture \
-        --test-threads=1
+    set -- --ignored --test-threads=1
+    if [ "$verbose" = 1 ]; then
+        set -- "$@" --nocapture
+    fi
+    if [ -n "$test_filter" ]; then
+        set -- "$@" "$test_filter"
+    fi
+
+    if [ "$verbose" = 1 ]; then
+        cargo test \
+            -p "$test_package" \
+            --test truenorth_regtest \
+            -- \
+            "$@"
+    else
+        cargo test \
+            -q \
+            -p "$test_package" \
+            --test truenorth_regtest \
+            -- \
+            "$@"
+    fi
+
+    if [ -z "$completed_suites" ]; then
+        completed_suites="$suite_label"
+    else
+        completed_suites="$completed_suites, $suite_label"
+    fi
 
     cleanup
     daemon_pid=""
     test_data_directory=""
 }
 
-run_integration_tests 0
-if [ "$test_package" = server ]; then
-    run_integration_tests 1
+run_package() {
+    package=$1
+    run_integration_tests "$package" 0
+    if [ "$package" = server ]; then
+        run_integration_tests "$package" 1
+    fi
+}
+
+if [ "$target" = all ]; then
+    run_package wallet
+    run_package indexer
+    run_package server
+else
+    run_package "$target"
 fi
+
+printf '\nPassed: %s\n' "$completed_suites"

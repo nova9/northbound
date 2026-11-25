@@ -16,11 +16,8 @@ use truenorth_rpc::NodeClient;
 
 use support::{catch_up, cli_json, confirmed_dump, run_cli};
 
-#[tokio::test]
-#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh indexer"]
-async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("index.sqlite");
+fn test_node_client() -> (NodeClient, String, PathBuf) {
+    assert_eq!(env::var("TRUENORTH_TEST_ISOLATED").as_deref(), Ok("1"));
     let url = format!(
         "http://127.0.0.1:{}",
         env::var("TRUENORTH_TEST_RPC_PORT").unwrap()
@@ -28,9 +25,26 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     let cookie =
         PathBuf::from(env::var_os("TRUENORTH_TEST_DATA_DIR").unwrap()).join("regtest/.cookie");
     let node = NodeClient::new(&url, cookie.clone(), "regtest").unwrap();
-    // Verify isolation before any mining or invalidation.
-    assert_eq!(env::var("TRUENORTH_TEST_ISOLATED").as_deref(), Ok("1"));
-    assert_eq!(node.fetch_tip().await.unwrap().blocks, 0);
+    (node, url, cookie)
+}
+
+fn ensure_spendable_funds() -> String {
+    let mining_address = run_cli(&["getnewaddress"]);
+    let height = cli_json(&["getblockchaininfo"])["blocks"].as_u64().unwrap();
+    if height < 101 {
+        let needed = 101 - height;
+        run_cli(&["generatetoaddress", &needed.to_string(), &mining_address]);
+    }
+    mining_address
+}
+
+#[tokio::test]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh indexer"]
+async fn indexes_blocks_and_matches_scantxoutset_across_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.sqlite");
+    let (node, _, _) = test_node_client();
+
     let release = cli_json(&["getnetworkinfo"]);
     println!("Testing {}", release["subversion"]);
     assert!(
@@ -39,12 +53,22 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
             .unwrap()
             .contains(include_str!("../../TRUENORTH_VERSION").trim())
     );
+
     let genesis = node.fetch_block_hash(0).await.unwrap();
     let mut database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
-    assert_eq!(catch_up(&node, &mut database).await, (1, 0));
+    catch_up(&node, &mut database).await;
+
     let reader = Connection::open(&path).unwrap();
     let genesis_eligible: bool = reader
-        .query_row("SELECT utxo_eligible FROM outputs", [], |row| row.get(0))
+        .query_row(
+            "SELECT o.utxo_eligible
+             FROM outputs o
+             JOIN transactions t ON t.txid = o.txid
+             JOIN blocks b ON b.hash = t.block_hash
+             WHERE b.height = 0",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert!(!genesis_eligible);
 
@@ -60,18 +84,19 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         0
     );
 
-    let mining_address = run_cli(&["getnewaddress"]);
-    run_cli(&["generatetoaddress", "101", &mining_address]);
-    assert_eq!(catch_up(&node, &mut database).await, (101, 0));
+    let mining_address = ensure_spendable_funds();
+    catch_up(&node, &mut database).await;
     let mining_addresses = vec![mining_address.clone(), unused_address.clone()];
     assert_eq!(
         assert_matches_scan(&node, &mut database, &path, &mining_addresses).await,
         0
     );
+
     let receiving_address = run_cli(&["getnewaddress"]);
     let address_info = cli_json(&["validateaddress", &receiving_address]);
     let script = hex::decode(address_info["scriptPubKey"].as_str().unwrap()).unwrap();
     assert_eq!(&script[..2], &[0x52, 0x20]);
+
     let payment = run_cli(&[
         "-named",
         "sendtoaddress",
@@ -80,9 +105,10 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         "fee_rate=1",
     ]);
     let mined = cli_json(&["generatetoaddress", "1", &mining_address]);
-    let original_block = mined[0].as_str().unwrap();
+    let payment_block = mined[0].as_str().unwrap();
     assert_eq!(catch_up(&node, &mut database).await, (1, 0));
-    let decoded_payment = cli_json(&["getrawtransaction", &payment, "true", original_block]);
+
+    let decoded_payment = cli_json(&["getrawtransaction", &payment, "true", payment_block]);
     let mut change_address = None;
     for output in decoded_payment["vout"].as_array().unwrap() {
         if let Some(address) = output["scriptPubKey"]["address"].as_str()
@@ -92,11 +118,11 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         }
     }
     let requested_addresses = vec![
-        mining_address.clone(),
+        mining_address,
         receiving_address.clone(),
         change_address.expect("payment should include change"),
         unused_address,
-        receiving_address.clone(),
+        receiving_address,
     ];
     assert_eq!(
         assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
@@ -114,6 +140,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     assert_eq!(amount, 100_000_000);
     let utxo = cli_json(&["gettxout", &payment, &vout.to_string(), "false"]);
     assert_eq!(utxo["scriptPubKey"]["hex"], hex::encode(saved_script));
+
     let input: (Vec<u8>, u32) = reader
         .query_row(
             "SELECT previous_txid, previous_vout FROM spends WHERE spending_txid = ?1",
@@ -131,6 +158,7 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         .is_empty()
     );
 
+    // Reopening an existing database resumes cleanly without re-applying blocks.
     drop(database);
     database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
     assert_eq!(catch_up(&node, &mut database).await, (0, 0));
@@ -138,8 +166,66 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         assert_matches_scan(&node, &mut database, &path, &requested_addresses).await,
         0
     );
+}
 
-    // Replace height 102 with an explicitly empty block, leaving payment pending.
+#[tokio::test]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh indexer"]
+async fn rolls_back_single_block_and_deep_reorg_and_matches_rebuild() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.sqlite");
+    let (node, _, _) = test_node_client();
+
+    let mining_address = ensure_spendable_funds();
+    let genesis = node.fetch_block_hash(0).await.unwrap();
+    let mut database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
+    catch_up(&node, &mut database).await;
+    let reader = Connection::open(&path).unwrap();
+
+    let receiving_address = run_cli(&["getnewaddress"]);
+    let payment = run_cli(&[
+        "-named",
+        "sendtoaddress",
+        &format!("address={receiving_address}"),
+        "amount=1",
+        "fee_rate=1",
+    ]);
+    let mined = cli_json(&["generatetoaddress", "1", &mining_address]);
+    let original_block = mined[0].as_str().unwrap();
+    assert_eq!(catch_up(&node, &mut database).await, (1, 0));
+
+    let decoded_payment = cli_json(&["getrawtransaction", &payment, "true", original_block]);
+    let mut change_address = None;
+    for output in decoded_payment["vout"].as_array().unwrap() {
+        if let Some(address) = output["scriptPubKey"]["address"].as_str()
+            && address != receiving_address
+        {
+            change_address = Some(address.to_owned());
+        }
+    }
+    let payment_id = hex::decode(&payment).unwrap();
+    let input: (Vec<u8>, u32) = reader
+        .query_row(
+            "SELECT previous_txid, previous_vout FROM spends WHERE spending_txid = ?1",
+            [payment_id.as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let spent_script: Vec<u8> = reader
+        .query_row(
+            "SELECT script FROM outputs WHERE txid = ?1 AND vout = ?2",
+            params![input.0, input.1],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let spent_address = indexer::address_from_script(&spent_script, "regtest").unwrap();
+    let requested_addresses = vec![
+        mining_address.clone(),
+        spent_address,
+        receiving_address,
+        change_address.expect("payment should include change"),
+    ];
+
+    // Replace the payment block with an explicitly empty block, leaving payment pending.
     run_cli(&["invalidateblock", original_block]);
     let replacement = cli_json(&["generateblock", &mining_address, "[]"]);
     assert_ne!(replacement["hash"].as_str().unwrap(), original_block);
@@ -165,11 +251,14 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
         ])
         .is_null()
     );
-    let restored: i64 = reader.query_row(
-        "SELECT count(*) FROM outputs WHERE txid = ?1 AND vout = ?2
-         AND NOT EXISTS (SELECT 1 FROM spends WHERE previous_txid = outputs.txid AND previous_vout = outputs.vout)",
-        params![input.0, input.1], |row| row.get(0),
-    ).unwrap();
+    let restored: i64 = reader
+        .query_row(
+            "SELECT count(*) FROM outputs WHERE txid = ?1 AND vout = ?2
+             AND NOT EXISTS (SELECT 1 FROM spends WHERE previous_txid = outputs.txid AND previous_vout = outputs.vout)",
+            params![input.0, input.1],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(restored, 1);
 
     // Mining includes the pending payment on the replacement branch exactly once.
@@ -197,7 +286,6 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
     run_cli(&["reconsiderblock", &ancestor]);
     catch_up(&node, &mut database).await;
-
     assert_matches_scan(&node, &mut database, &path, &requested_addresses).await;
 
     let mut rebuilt =
@@ -206,6 +294,18 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
     let rebuilt_reader = Connection::open(directory.path().join("rebuilt.sqlite")).unwrap();
     assert_eq!(confirmed_dump(&reader), confirmed_dump(&rebuilt_reader));
     assert_eq!(database.tip().unwrap(), rebuilt.tip().unwrap());
+}
+
+#[tokio::test]
+#[ignore = "requires isolated TrueNorth regtest; run scripts/test-truenorth-integration.sh indexer"]
+async fn rejects_unavailable_node_and_wrong_network_without_moving_tip() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.sqlite");
+    let (node, url, cookie) = test_node_client();
+
+    let genesis = node.fetch_block_hash(0).await.unwrap();
+    let mut database = IndexDatabase::open(&path, "regtest", genesis).unwrap();
+    catch_up(&node, &mut database).await;
 
     let before = database.tip().unwrap();
     let unavailable = NodeClient::new("http://127.0.0.1:1", cookie.clone(), "regtest").unwrap();
@@ -215,7 +315,8 @@ async fn indexes_resumes_rolls_back_and_rebuilds_against_core() {
             .is_err()
     );
     assert_eq!(database.tip().unwrap(), before);
-    let wrong_network = NodeClient::new(&url, cookie.clone(), "main").unwrap();
+
+    let wrong_network = NodeClient::new(&url, cookie, "main").unwrap();
     assert!(
         synchronize_next_block(&wrong_network, &mut database)
             .await

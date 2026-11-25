@@ -11,31 +11,37 @@ pub fn run_cli(arguments: &[&str]) -> String {
         Ok("1"),
         "run scripts/test-truenorth-integration.sh indexer; never invalidate a user's node"
     );
-    let output = Command::new(env::var_os("TRUENORTH_TEST_CLI").unwrap())
+    let cli_path =
+        env::var_os("TRUENORTH_TEST_CLI").expect("TRUENORTH_TEST_CLI must point to truenorth-cli");
+    let data_directory = env::var("TRUENORTH_TEST_DATA_DIR")
+        .expect("TRUENORTH_TEST_DATA_DIR must point to the test node data");
+    let rpc_port =
+        env::var("TRUENORTH_TEST_RPC_PORT").expect("TRUENORTH_TEST_RPC_PORT must be set");
+    let funding_wallet = env::var("TRUENORTH_TEST_WALLET")
+        .expect("TRUENORTH_TEST_WALLET must name the funding wallet");
+
+    let output = Command::new(cli_path)
         .arg("-regtest")
-        .arg(format!(
-            "-datadir={}",
-            env::var("TRUENORTH_TEST_DATA_DIR").unwrap()
-        ))
-        .arg(format!(
-            "-rpcport={}",
-            env::var("TRUENORTH_TEST_RPC_PORT").unwrap()
-        ))
-        .arg("-rpcwallet=funding")
+        .arg(format!("-datadir={data_directory}"))
+        .arg(format!("-rpcport={rpc_port}"))
+        .arg(format!("-rpcwallet={funding_wallet}"))
         .args(arguments)
         .output()
-        .unwrap();
+        .expect("truenorth-cli should start");
     assert!(
         output.status.success(),
         "{}: {}",
         arguments[0],
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    String::from_utf8(output.stdout)
+        .expect("truenorth-cli output should be UTF-8")
+        .trim()
+        .to_owned()
 }
 
 pub fn cli_json(arguments: &[&str]) -> Value {
-    serde_json::from_str(&run_cli(arguments)).unwrap()
+    serde_json::from_str(&run_cli(arguments)).expect("truenorth-cli output should be valid JSON")
 }
 
 pub async fn catch_up(node: &NodeClient, database: &mut IndexDatabase) -> (usize, usize) {

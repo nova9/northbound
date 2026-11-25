@@ -214,3 +214,31 @@ impl NodeClient {
         Ok(result.take())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::NodeClient;
+
+    #[test]
+    fn validates_network_and_rpc_url_shape() {
+        let cookie = PathBuf::from(".cookie");
+        assert!(NodeClient::new("http://127.0.0.1:18443", cookie.clone(), "regtest").is_ok());
+        assert!(NodeClient::new("https://127.0.0.1:9554", cookie.clone(), "main").is_ok());
+
+        assert!(NodeClient::new("http://127.0.0.1:18443", cookie.clone(), "testnet").is_err());
+        for bad_url in [
+            "not-a-url",
+            "ftp://127.0.0.1:18443",
+            "http://user:pass@127.0.0.1:18443",
+            "http://127.0.0.1:18443/?foo=bar",
+            "http://127.0.0.1:18443/#frag",
+        ] {
+            assert!(
+                NodeClient::new(bad_url, cookie.clone(), "regtest").is_err(),
+                "expected invalid URL to be rejected: {bad_url}"
+            );
+        }
+    }
+}

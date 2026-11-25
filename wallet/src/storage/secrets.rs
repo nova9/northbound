@@ -111,21 +111,6 @@ impl DecryptedWalletSecrets {
         EncryptedWalletSecrets::encrypt(&plaintext, password)
     }
 
-    #[cfg(test)]
-    pub(crate) fn encrypt_with_parameters(
-        &self,
-        password: &str,
-        key_derivation_parameters: KeyDerivationParameters,
-    ) -> Result<EncryptedWalletSecrets, String> {
-        let plaintext = self.serialize_for_encryption()?;
-
-        EncryptedWalletSecrets::encrypt_with_parameters(
-            &plaintext,
-            password,
-            key_derivation_parameters,
-        )
-    }
-
     pub(crate) fn encrypt_with_key(
         &self,
         salt: &[u8; SALT_LENGTH],
@@ -182,20 +167,6 @@ impl EncryptedWalletSecrets {
         let encryption_key = derive_encryption_key(password, &salt, key_derivation_parameters)?;
 
         Self::encrypt_with_key(plaintext, &salt, &encryption_key, key_derivation_parameters)
-    }
-
-    #[cfg(test)]
-    pub fn decrypt(&self, password: &str) -> Result<Vec<u8>, String> {
-        let encryption_key = self.derive_encryption_key(password)?;
-
-        decrypt_wallet_secrets_with_key(&self.ciphertext, &encryption_key, &self.nonce)
-    }
-
-    #[cfg(test)]
-    pub fn decrypt_wallet(&self, password: &str) -> Result<DecryptedWalletSecrets, String> {
-        let encryption_key = self.derive_encryption_key(password)?;
-
-        self.decrypt_wallet_with_key(&encryption_key)
     }
 
     pub(crate) fn derive_encryption_key(&self, password: &str) -> Result<EncryptionKey, String> {
@@ -288,18 +259,6 @@ impl EncryptedWalletSecrets {
     }
 }
 
-#[cfg(test)]
-pub fn encrypt_wallet_secrets(
-    plaintext: &[u8],
-    password: &str,
-    salt: &[u8; SALT_LENGTH],
-    nonce: &[u8; NONCE_LENGTH],
-) -> Result<Vec<u8>, String> {
-    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
-
-    encrypt_wallet_secrets_with_key(plaintext, &encryption_key, nonce)
-}
-
 fn encrypt_wallet_secrets_with_key(
     plaintext: &[u8],
     encryption_key: &EncryptionKey,
@@ -314,18 +273,6 @@ fn encrypt_wallet_secrets_with_key(
     let result = cipher.encrypt(&nonce, plaintext);
 
     result.map_err(|_| "could not encrypt wallet secrets".to_owned())
-}
-
-#[cfg(test)]
-pub fn decrypt_wallet_secrets(
-    ciphertext: &[u8],
-    password: &str,
-    salt: &[u8; SALT_LENGTH],
-    nonce: &[u8; NONCE_LENGTH],
-) -> Result<Vec<u8>, String> {
-    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
-
-    decrypt_wallet_secrets_with_key(ciphertext, &encryption_key, nonce)
 }
 
 fn decrypt_wallet_secrets_with_key(
@@ -366,6 +313,62 @@ fn derive_encryption_key(
         .map_err(|error| format!("could not derive wallet encryption key: {error}"))?;
 
     Ok(encryption_key)
+}
+
+#[cfg(test)]
+impl DecryptedWalletSecrets {
+    pub(crate) fn encrypt_with_parameters(
+        &self,
+        password: &str,
+        key_derivation_parameters: KeyDerivationParameters,
+    ) -> Result<EncryptedWalletSecrets, String> {
+        let plaintext = self.serialize_for_encryption()?;
+
+        EncryptedWalletSecrets::encrypt_with_parameters(
+            &plaintext,
+            password,
+            key_derivation_parameters,
+        )
+    }
+}
+
+#[cfg(test)]
+impl EncryptedWalletSecrets {
+    pub fn decrypt(&self, password: &str) -> Result<Vec<u8>, String> {
+        let encryption_key = self.derive_encryption_key(password)?;
+
+        decrypt_wallet_secrets_with_key(&self.ciphertext, &encryption_key, &self.nonce)
+    }
+
+    pub fn decrypt_wallet(&self, password: &str) -> Result<DecryptedWalletSecrets, String> {
+        let encryption_key = self.derive_encryption_key(password)?;
+
+        self.decrypt_wallet_with_key(&encryption_key)
+    }
+}
+
+#[cfg(test)]
+fn encrypt_wallet_secrets(
+    plaintext: &[u8],
+    password: &str,
+    salt: &[u8; SALT_LENGTH],
+    nonce: &[u8; NONCE_LENGTH],
+) -> Result<Vec<u8>, String> {
+    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
+
+    encrypt_wallet_secrets_with_key(plaintext, &encryption_key, nonce)
+}
+
+#[cfg(test)]
+fn decrypt_wallet_secrets(
+    ciphertext: &[u8],
+    password: &str,
+    salt: &[u8; SALT_LENGTH],
+    nonce: &[u8; NONCE_LENGTH],
+) -> Result<Vec<u8>, String> {
+    let encryption_key = derive_encryption_key(password, salt, CURRENT_KEY_DERIVATION_PARAMETERS)?;
+
+    decrypt_wallet_secrets_with_key(ciphertext, &encryption_key, nonce)
 }
 
 #[cfg(test)]
